@@ -61,6 +61,13 @@ struct AnnotationDialog: View {
                     isSelected: selectedAction == .expand,
                     action: { selectedAction = .expand }
                 )
+
+                ActionButton(
+                    title: "Slides",
+                    icon: "square.grid.2x2",
+                    isSelected: selectedAction == .googleSlides,
+                    action: { selectedAction = .googleSlides }
+                )
             }
             .padding(16)
 
@@ -184,6 +191,8 @@ struct AnnotationDialog: View {
             return "What additional information should be included?"
         case .suggest:
             return "What suggestions do you need?"
+        case .googleSlides:
+            return "Describe the Google Slides presentation to create from this text"
         }
     }
 

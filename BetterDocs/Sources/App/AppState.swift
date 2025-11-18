@@ -31,6 +31,7 @@ class AppState {
     let documentService = DocumentService()
     let searchService = SearchService()
     let claudeService = ClaudeService()
+    let fileWatcher = FileSystemWatcher()
 
     init() {
         // Restore last opened folder on launch
@@ -184,6 +185,7 @@ class AppState {
         let verifyAnnotations = pendingAnnotations.filter { $0.type == .verify }
         let expandAnnotations = pendingAnnotations.filter { $0.type == .expand }
         let suggestAnnotations = pendingAnnotations.filter { $0.type == .suggest }
+        let googleSlidesAnnotations = pendingAnnotations.filter { $0.type == .googleSlides }
 
         if !editAnnotations.isEmpty {
             prompt += "## Edit Instructions:\n\n"
@@ -225,6 +227,20 @@ class AppState {
             for (index, annotation) in suggestAnnotations.enumerated() {
                 prompt += "\(index + 1). File: \(annotation.fileName)\n"
                 prompt += "   Suggestion: \(annotation.instruction)\n\n"
+            }
+        }
+
+        if !googleSlidesAnnotations.isEmpty {
+            prompt += "## Google Slides Creation Requests:\n\n"
+            prompt += "IMPORTANT: You have access to MCP (Model Context Protocol) servers and tools that can create Google Slides presentations. Use these tools to create the presentations based on the following requests:\n\n"
+            for (index, annotation) in googleSlidesAnnotations.enumerated() {
+                prompt += "\(index + 1). Create Google Slides from: \(annotation.fileName)\n"
+                prompt += "   Source text: \"\(annotation.selection.selectedText)\"\n"
+                prompt += "   Instructions: \(annotation.instruction)\n"
+                if !annotation.references.isEmpty {
+                    prompt += "   Referenced files: \(annotation.references.joined(separator: ", "))\n"
+                }
+                prompt += "\n"
             }
         }
 
@@ -273,6 +289,8 @@ class AppState {
                     prompt += "**EXPAND**"
                 case .suggest:
                     prompt += "**SUGGEST**"
+                case .googleSlides:
+                    prompt += "**GOOGLE SLIDES**"
                 }
 
                 if let line = annotation.lineNumber {
@@ -361,6 +379,15 @@ class AppState {
 
             // Index for search (simplified for now)
             await searchService.indexFolder(folder)
+
+            // Start watching the folder for changes
+            fileWatcher.watch(path: url) { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    print("🔄 File system changed, reloading folder...")
+                    await self.loadFolder(at: url)
+                }
+            }
         } catch {
             print("❌ Error loading folder: \(error.localizedDescription)")
         }

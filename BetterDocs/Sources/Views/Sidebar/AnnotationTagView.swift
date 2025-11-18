@@ -2,10 +2,11 @@ import SwiftUI
 
 struct AnnotationTagsView: View {
     @Environment(AppState.self) private var appState
-    
+    var onSendToClaude: (() -> Void)? = nil
+
     var body: some View {
         let pendingAnnotations = appState.annotations.filter { $0.status == .pending }
-        
+
         if !pendingAnnotations.isEmpty {
             VStack(spacing: 0) {
                 // Header
@@ -15,7 +16,13 @@ struct AnnotationTagsView: View {
                     Text("Pending Edits (\(pendingAnnotations.count))")
                         .font(.headline)
                     Spacer()
-                    Button(action: sendToClaude) {
+                    Button(action: {
+                        if let onSendToClaude = onSendToClaude {
+                            onSendToClaude()
+                        } else {
+                            sendToClaudeLegacy()
+                        }
+                    }) {
                         Text("Send to Claude")
                             .font(.caption)
                             .padding(.horizontal, 8)
@@ -29,9 +36,9 @@ struct AnnotationTagsView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(Color(NSColor.controlBackgroundColor))
-                
+
                 Divider()
-                
+
                 // Annotation tags
                 ScrollView {
                     VStack(spacing: 8) {
@@ -42,13 +49,14 @@ struct AnnotationTagsView: View {
                     .padding(12)
                 }
                 .frame(maxHeight: 200)
-                
+
                 Divider()
             }
         }
     }
-    
-    private func sendToClaude() {
+
+    // Legacy method for backward compatibility (used when no callback is provided)
+    private func sendToClaudeLegacy() {
         let prompt = appState.generateClaudePromptWithFileContent()
         print("📤 Sending to Claude:\n\(prompt)")
 
@@ -155,6 +163,7 @@ struct AnnotationTag: View {
         case .verify: return .green
         case .expand: return .purple
         case .suggest: return .orange
+        case .googleSlides: return .red
         }
     }
     

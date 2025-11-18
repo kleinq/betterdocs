@@ -50,6 +50,7 @@ struct Annotation: Identifiable, Codable, Equatable {
         case .verify: return "checkmark.circle.fill"
         case .expand: return "plus.circle.fill"
         case .suggest: return "lightbulb.fill"
+        case .googleSlides: return "square.grid.2x2.fill"
         }
     }
 }
@@ -65,6 +66,7 @@ enum AnnotationType: String, Codable, CaseIterable {
     case verify = "Verify Consistency"
     case expand = "Expand Content"
     case suggest = "Suggestion"
+    case googleSlides = "Create Google Slides"
 }
 
 enum AnnotationStatus: String, Codable {

@@ -1,0 +1,163 @@
+BetterDocs Project Structure
+═══════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────┐
+│                       BetterDocs App                        │
+│                     (macOS 15+ Native)                      │
+└─────────────────────────────────────────────────────────────┘
+
+╔═══════════════════════════════════════════════════════════════╗
+║                     APPLICATION LAYER                         ║
+╠═══════════════════════════════════════════════════════════════╣
+║  BetterDocsApp.swift  │  AppState.swift  │  ContentView.swift ║
+║  SettingsView.swift   │  (Global State)  │  (Main Layout)     ║
+╚═══════════════════════════════════════════════════════════════╝
+                            │
+                            │ manages
+                            ▼
+┌───────────────────────────────────────────────────────────────┐
+│                         VIEW LAYER                            │
+├─────────────────┬───────────────┬─────────────┬───────────────┤
+│  ToolbarView    │ NavigationView│ PreviewView │ClaudeSidebar  │
+│  ┌──────────┐  │ ┌──────────┐  │ ┌─────────┐ │ ┌──────────┐  │
+│  │ Search   │  │ │ File Tree│  │ │Document │ │ │  Chat    │  │
+│  │ Actions  │  │ │ Browser  │  │ │ Preview │ │ │Interface │  │
+│  │ Settings │  │ │ Keyboard │  │ │ Multi-  │ │ │ Context  │  │
+│  └──────────┘  │ │Navigation│  │ │ Format  │ │ │ Aware    │  │
+│                │ └──────────┘  │ └─────────┘ │ └──────────┘  │
+└─────────────────┴───────────────┴─────────────┴───────────────┘
+                            │
+                            │ uses
+                            ▼
+┌───────────────────────────────────────────────────────────────┐
+│                        MODEL LAYER                            │
+├─────────────────┬───────────────┬─────────────┬───────────────┤
+│FileSystemItem   │  Document     │  Folder     │ SearchResult  │
+│ (Protocol)      │               │             │               │
+│                 │ - content     │ - children  │ - matches     │
+│ - id            │ - type        │ - expanded  │ - score       │
+│ - name          │ - size        │ - recursive │ - context     │
+│ - path          │ - metadata    │   methods   │               │
+│ - dates         │               │             │               │
+└─────────────────┴───────────────┴─────────────┴───────────────┘
+                            │
+                            │ processed by
+                            ▼
+┌───────────────────────────────────────────────────────────────┐
+│                      SERVICE LAYER                            │
+├──────────────────────┬──────────────────────┬─────────────────┤
+│  DocumentService     │   SearchService      │ ClaudeService   │
+│  (actor)             │   (actor)            │ (actor)         │
+│                      │                      │                 │
+│ ┌─────────────────┐  │ ┌─────────────────┐  │ ┌────────────┐  │
+│ │ Scan Folders    │  │ │ Index Documents │  │ │ API Client │  │
+│ │ Parse Files     │  │ │ Search Content  │  │ │ Context    │  │
+│ │ Extract Content │  │ │ Filter Results  │  │ │ Management │  │
+│ │ MD, PDF, Office │  │ │ Rank Results    │  │ │ Chat       │  │
+│ │ CSV, Code, Imgs │  │ │ Filename Search │  │ │ Functions  │  │
+│ └─────────────────┘  │ └─────────────────┘  │ └────────────┘  │
+└──────────────────────┴──────────────────────┴─────────────────┘
+
+
+DATA FLOW
+═════════
+
+1. User Opens Folder
+   ─────────────────
+   User Action → AppState.openFolder()
+              → DocumentService.scanFolder()
+              → Build Folder hierarchy
+              → SearchService.indexFolder()
+              → Update NavigationView
+
+2. User Selects File
+   ─────────────────
+   Click in Navigation → AppState.selectItem()
+                      → PreviewView updates
+                      → ClaudeSidebar gets context
+
+3. User Searches
+   ──────────────
+   Type in Search → AppState.search()
+                  → SearchService.search()
+                  → Filter & rank results
+                  → Update NavigationView
+
+4. User Asks Claude
+   ─────────────────
+   Chat message → ClaudeSidebarView
+                → ClaudeService.sendMessage()
+                → Build context from selected item
+                → Call Claude API
+                → Display response
+
+
+SUPPORTED FILE TYPES
+════════════════════
+
+Documents:        Office:           Code:
+ • Markdown        • Word (DOC)      • Swift
+ • PDF             • Excel (XLS)     • Python
+ • Text            • PowerPoint      • JavaScript
+ • CSV             • Pages           • Java
+                                     • C/C++
+                                     • Rust
+Media:                               • Go
+ • Images (JPG, PNG, etc.)
+ • (More planned)
+
+
+CLAUDE INTEGRATION
+═════════════════
+
+Current:                    Planned:
+ • Direct API calls          • Claude Code SDK
+ • Document context          • Workflows
+ • Basic chat                • Batch operations
+ • Summarization            • Advanced tools
+                            • Multi-step tasks
+
+
+TECHNOLOGY STACK
+═══════════════
+
+Language:         Frameworks:         Dependencies:
+ • Swift 6.0       • SwiftUI            • swift-markdown
+                   • PDFKit             • (More as needed)
+                   • QuickLook
+Platform:          • UniformTypes
+ • macOS 15+       • Foundation
+
+
+ARCHITECTURE PATTERNS
+════════════════════
+
+• MVVM (Model-View-ViewModel)
+• Actor-based concurrency
+• Protocol-oriented design
+• Observable state management
+• Async/await for operations
+
+
+NEXT STEPS
+═════════
+
+1. Build & Run
+   swift build
+   swift run BetterDocs
+
+2. Implement Remaining Features
+   - Complete file parsers
+   - Finish preview renderers
+   - Add tests
+
+3. Integrate Claude Code SDK
+   - Advanced AI features
+   - Workflows
+   - Automation
+
+4. Polish & Release
+   - Performance optimization
+   - UI/UX refinement
+   - App Store submission
+

@@ -476,6 +476,30 @@ class AppState {
         saveOpenTabs()
     }
 
+    func selectNextTab() {
+        guard !openTabs.isEmpty else { return }
+
+        if let activeTabID = activeTabID,
+           let currentIndex = openTabs.firstIndex(where: { $0.id == activeTabID }) {
+            let nextIndex = (currentIndex + 1) % openTabs.count
+            switchToTab(openTabs[nextIndex].id)
+        } else if let firstTab = openTabs.first {
+            switchToTab(firstTab.id)
+        }
+    }
+
+    func selectPreviousTab() {
+        guard !openTabs.isEmpty else { return }
+
+        if let activeTabID = activeTabID,
+           let currentIndex = openTabs.firstIndex(where: { $0.id == activeTabID }) {
+            let previousIndex = currentIndex == 0 ? openTabs.count - 1 : currentIndex - 1
+            switchToTab(openTabs[previousIndex].id)
+        } else if let lastTab = openTabs.last {
+            switchToTab(lastTab.id)
+        }
+    }
+
     func updateTabScrollPosition(_ tabID: UUID, position: CGPoint) {
         // Update scroll position for pinned tabs
         if let index = openTabs.firstIndex(where: { $0.id == tabID }) {

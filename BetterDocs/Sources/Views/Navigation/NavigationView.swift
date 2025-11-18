@@ -4,6 +4,7 @@ struct NavigationView: View {
     @Environment(AppState.self) private var appState
     @State private var selectedID: UUID?
     @State private var expandedFolders: Set<UUID> = []
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +30,20 @@ struct NavigationView: View {
                         }
                     }
                     .padding(8)
+                }
+                .focusable()
+                .focused($isFocused)
+                .onKeyPress(.downArrow) {
+                    navigateSearchResults(direction: .down)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    navigateSearchResults(direction: .up)
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    openSelectedSearchResult()
+                    return .handled
                 }
             } else if appState.isSearching {
                 // No search results
@@ -63,6 +78,32 @@ struct NavigationView: View {
                         .padding(4)
                     }
                 }
+                .focusable()
+                .focused($isFocused)
+                .onKeyPress(.downArrow) {
+                    navigateTree(direction: .down)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    navigateTree(direction: .up)
+                    return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    expandSelectedFolder()
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    collapseSelectedFolder()
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    openSelectedItem()
+                    return .handled
+                }
+                .onKeyPress(.space) {
+                    toggleSelectedFolder()
+                    return .handled
+                }
             } else {
                 // Empty state
                 VStack(spacing: 16) {
@@ -82,6 +123,10 @@ struct NavigationView: View {
             }
         }
         .background(Color(NSColor.textBackgroundColor))
+        .onAppear {
+            // Auto-focus the navigation view when it appears
+            isFocused = true
+        }
         .onChange(of: selectedID) { _, newValue in
             if let id = newValue,
                let folder = appState.rootFolder,
@@ -124,6 +169,145 @@ struct NavigationView: View {
                 if let found = findPath(to: itemID, in: subfolder, currentPath: newPath) {
                     return found
                 }
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Keyboard Navigation
+
+    private enum NavigationDirection {
+        case up, down
+    }
+
+    private func navigateTree(direction: NavigationDirection) {
+        guard let rootFolder = appState.rootFolder else { return }
+
+        let visibleItems = getVisibleItems(from: rootFolder)
+        guard !visibleItems.isEmpty else { return }
+
+        if let currentID = selectedID,
+           let currentIndex = visibleItems.firstIndex(where: { $0.id == currentID }) {
+            let newIndex: Int
+            switch direction {
+            case .down:
+                newIndex = min(currentIndex + 1, visibleItems.count - 1)
+            case .up:
+                newIndex = max(currentIndex - 1, 0)
+            }
+            selectedID = visibleItems[newIndex].id
+        } else {
+            // No selection, select first item
+            selectedID = visibleItems.first?.id
+        }
+    }
+
+    private func navigateSearchResults(direction: NavigationDirection) {
+        let results = appState.searchResults
+        guard !results.isEmpty else { return }
+
+        if let currentID = selectedID,
+           let currentIndex = results.firstIndex(where: { $0.id == currentID }) {
+            let newIndex: Int
+            switch direction {
+            case .down:
+                newIndex = min(currentIndex + 1, results.count - 1)
+            case .up:
+                newIndex = max(currentIndex - 1, 0)
+            }
+            selectedID = results[newIndex].id
+        } else {
+            // No selection, select first result
+            selectedID = results.first?.id
+        }
+    }
+
+    private func getVisibleItems(from folder: Folder) -> [any FileSystemItem] {
+        var items: [any FileSystemItem] = [folder]
+
+        if expandedFolders.contains(folder.id) {
+            for child in folder.children {
+                if let subfolder = child as? Folder {
+                    items.append(contentsOf: getVisibleItems(from: subfolder))
+                } else {
+                    items.append(child)
+                }
+            }
+        }
+
+        return items
+    }
+
+    private func expandSelectedFolder() {
+        guard let selectedID = selectedID,
+              let folder = appState.rootFolder,
+              let item = folder.findItem(withID: selectedID),
+              item.isFolder else { return }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            expandedFolders.insert(selectedID)
+        }
+    }
+
+    private func collapseSelectedFolder() {
+        guard let selectedID = selectedID,
+              let folder = appState.rootFolder,
+              let item = folder.findItem(withID: selectedID) else { return }
+
+        if item.isFolder && expandedFolders.contains(selectedID) {
+            // Collapse the current folder if it's expanded
+            withAnimation(.easeInOut(duration: 0.2)) {
+                expandedFolders.remove(selectedID)
+            }
+        } else {
+            // Navigate to parent folder
+            if let parentID = findParent(of: selectedID, in: folder) {
+                self.selectedID = parentID
+            }
+        }
+    }
+
+    private func toggleSelectedFolder() {
+        guard let selectedID = selectedID,
+              let folder = appState.rootFolder,
+              let item = folder.findItem(withID: selectedID),
+              item.isFolder else { return }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedFolders.contains(selectedID) {
+                expandedFolders.remove(selectedID)
+            } else {
+                expandedFolders.insert(selectedID)
+            }
+        }
+    }
+
+    private func openSelectedItem() {
+        guard let selectedID = selectedID,
+              let folder = appState.rootFolder,
+              let item = folder.findItem(withID: selectedID) else { return }
+
+        appState.openInTab(item)
+    }
+
+    private func openSelectedSearchResult() {
+        guard let selectedID = selectedID,
+              let result = appState.searchResults.first(where: { $0.id == selectedID }) else { return }
+
+        appState.openInTab(result.item)
+    }
+
+    private func findParent(of itemID: UUID, in folder: Folder) -> UUID? {
+        // Check direct children
+        for child in folder.children {
+            if child.id == itemID {
+                return folder.id
+            }
+
+            // Check nested folders
+            if let subfolder = child as? Folder,
+               let parent = findParent(of: itemID, in: subfolder) {
+                return parent
             }
         }
         return nil

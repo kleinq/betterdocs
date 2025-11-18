@@ -3,6 +3,7 @@ import SwiftUI
 struct ToolbarView: View {
     @Environment(AppState.self) private var appState
     @State private var searchText: String = ""
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         HStack(spacing: 16) {
@@ -11,7 +12,7 @@ struct ToolbarView: View {
                 Button(action: { appState.openFolder() }) {
                     Label("Open", systemImage: "folder.badge.plus")
                 }
-                .help("Open folder")
+                .help("Open folder (⌘O)")
 
                 Divider()
                     .frame(height: 24)
@@ -31,7 +32,7 @@ struct ToolbarView: View {
                 Button(action: { appState.revealInFolderTree() }) {
                     Image(systemName: "arrow.triangle.2.circlepath")
                 }
-                .help("Reveal in folder tree")
+                .help("Reveal in folder tree (⌘R)")
                 .disabled(appState.selectedItem == nil)
 
                 Button(action: { appState.setViewMode(.grid) }) {
@@ -61,8 +62,15 @@ struct ToolbarView: View {
                 TextField("Search files and content...", text: $searchText)
                     .textFieldStyle(.plain)
                     .frame(width: 300)
+                    .focused($isSearchFocused)
                     .onChange(of: searchText) { _, newValue in
                         appState.search(newValue)
+                    }
+                    .onKeyPress(.escape) {
+                        searchText = ""
+                        appState.clearSearch()
+                        isSearchFocused = false
+                        return .handled
                     }
 
                 if !searchText.isEmpty {
@@ -80,6 +88,9 @@ struct ToolbarView: View {
             .padding(.vertical, 6)
             .background(Color(NSColor.controlBackgroundColor))
             .cornerRadius(8)
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FocusSearch"))) { _ in
+                isSearchFocused = true
+            }
 
             Spacer()
 

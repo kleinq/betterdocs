@@ -57,12 +57,20 @@ struct ContentView: View {
             UserDefaults.standard.set(newValue, forKey: "sidebarWidth")
         }
         .onAppear {
-            // Set up keyboard event monitor for "/" key and Cmd+K
+            // Set up keyboard event monitor for "/" key, Cmd+K, and Ctrl+O
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 // Check if Cmd+K is pressed
                 if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "k" {
                     withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
                         appState.isCommandPaletteOpen.toggle()
+                    }
+                    return nil // Consume the event
+                }
+
+                // Check if Ctrl+O is pressed (toggle view mode)
+                if event.modifierFlags.contains(.control) && event.charactersIgnoringModifiers == "o" {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        appState.toggleViewMode()
                     }
                     return nil // Consume the event
                 }

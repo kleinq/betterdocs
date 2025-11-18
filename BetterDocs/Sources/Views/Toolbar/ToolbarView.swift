@@ -34,15 +34,21 @@ struct ToolbarView: View {
                 .help("Reveal in folder tree")
                 .disabled(appState.selectedItem == nil)
 
-                Button(action: { /* TODO: Grid view */ }) {
+                Button(action: { appState.setViewMode(.grid) }) {
                     Image(systemName: "square.grid.2x2")
                 }
-                .help("Grid view")
+                .help("Grid view (Ctrl+O)")
+                .foregroundColor(appState.viewMode == .grid ? .accentColor : .primary)
+                .background(appState.viewMode == .grid ? Color.accentColor.opacity(0.1) : Color.clear)
+                .cornerRadius(4)
 
-                Button(action: { /* TODO: List view */ }) {
+                Button(action: { appState.setViewMode(.list) }) {
                     Image(systemName: "list.bullet")
                 }
-                .help("List view")
+                .help("List view (Ctrl+O)")
+                .foregroundColor(appState.viewMode == .list ? .accentColor : .primary)
+                .background(appState.viewMode == .list ? Color.accentColor.opacity(0.1) : Color.clear)
+                .cornerRadius(4)
             }
 
             Spacer()

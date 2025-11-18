@@ -47,17 +47,21 @@ struct NavigationView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let rootFolder = appState.rootFolder {
-                // Show file tree
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        FileTreeItemView(
-                            item: rootFolder,
-                            level: 0,
-                            selectedID: $selectedID,
-                            expandedFolders: $expandedFolders
-                        )
+                // Show file tree or grid based on view mode
+                if appState.viewMode == .grid {
+                    GridView(folder: rootFolder)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            FileTreeItemView(
+                                item: rootFolder,
+                                level: 0,
+                                selectedID: $selectedID,
+                                expandedFolders: $expandedFolders
+                            )
+                        }
+                        .padding(4)
                     }
-                    .padding(4)
                 }
             } else {
                 // Empty state

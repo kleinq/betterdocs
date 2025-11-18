@@ -55,13 +55,13 @@ struct ContentView: View {
             UserDefaults.standard.set(newValue, forKey: "navigationWidth")
         }
         .onAppear {
-            // Set up keyboard event monitor for "/" key, Cmd+K, Cmd+F, and Ctrl+O
+            // Set up keyboard event monitor for Cmd+/, Cmd+K, Cmd+F, and Ctrl+O
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 print("📥 ContentView received key event: '\(event.characters ?? "nil")' with modifiers: \(event.modifierFlags)")
 
-                // Check if "/" key is pressed (without modifiers)
-                if event.charactersIgnoringModifiers == "/" && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.option) {
-                    print("✅ / key detected, toggling chat popup")
+                // Check if Cmd+/ is pressed (without Shift to avoid conflict with Cmd+? for help)
+                if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && event.charactersIgnoringModifiers == "/" {
+                    print("✅ Cmd+/ detected, toggling chat popup")
                     withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
                         // Close command palette before opening chat
                         appState.isCommandPaletteOpen = false

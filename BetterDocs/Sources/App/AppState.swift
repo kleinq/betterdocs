@@ -19,8 +19,9 @@ class AppState {
 
     // UI State
     var isOutlineVisible: Bool = UserDefaults.standard.bool(forKey: "isOutlineVisible")
-    var isChatOpen: Bool = false
     var isCommandPaletteOpen: Bool = false
+    var isChatPopupOpen: Bool = false
+    var isHelpOpen: Bool = false
     var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "list") ?? .list
 
     // Annotations

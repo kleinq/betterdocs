@@ -14,7 +14,7 @@ struct BetterDocsApp: App {
         WindowGroup {
             ContentView()
                 .environment(appState)
-                .frame(minWidth: 1000, minHeight: 600)
+                .frame(minWidth: 600, minHeight: 400)
                 .onAppear {
                     print("✅ Window appeared!")
                     // Wire appState to the delegate
@@ -22,6 +22,7 @@ struct BetterDocsApp: App {
                 }
         }
         .windowStyle(.automatic)
+        .windowResizability(.contentSize)
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {

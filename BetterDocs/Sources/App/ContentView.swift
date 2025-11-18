@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var navigationWidth: CGFloat = UserDefaults.standard.double(forKey: "navigationWidth") == 0 ? 250 : UserDefaults.standard.double(forKey: "navigationWidth")
-    @State private var sidebarWidth: CGFloat = UserDefaults.standard.double(forKey: "sidebarWidth") == 0 ? 350 : UserDefaults.standard.double(forKey: "sidebarWidth")
+    @State private var eventMonitor: Any?
 
     var body: some View {
         ZStack {
@@ -24,15 +24,9 @@ struct ContentView: View {
 
                         ResizableDivider(width: $navigationWidth, minWidth: 150, maxWidth: 400, isRightSidebar: false)
 
-                        // Preview Pane
+                        // Preview Pane (with floating outline overlay)
                         PreviewView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                        ResizableDivider(width: $sidebarWidth, minWidth: 250, maxWidth: 600, isRightSidebar: true)
-
-                        // Claude Sidebar (outline and annotations only now)
-                        ClaudeSidebarView()
-                            .frame(width: sidebarWidth)
                     }
                 }
             }
@@ -44,45 +38,78 @@ struct ContentView: View {
                 set: { appState.isCommandPaletteOpen = $0 }
             ))
 
-            // Floating Chat Drawer
-            FloatingChatDrawer(isOpen: Binding(
-                get: { appState.isChatOpen },
-                set: { appState.isChatOpen = $0 }
+            // Chat Popup
+            ChatPopupView(isOpen: Binding(
+                get: { appState.isChatPopupOpen },
+                set: { appState.isChatPopupOpen = $0 }
             ))
+
+            // Help Screen
+            HelpView(isOpen: Binding(
+                get: { appState.isHelpOpen },
+                set: { appState.isHelpOpen = $0 }
+            ))
+            .zIndex(100)
         }
         .onChange(of: navigationWidth) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "navigationWidth")
         }
-        .onChange(of: sidebarWidth) { _, newValue in
-            UserDefaults.standard.set(newValue, forKey: "sidebarWidth")
-        }
         .onAppear {
-            // Set up keyboard event monitor for "/" key, Cmd+K, and Ctrl+O
-            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Set up keyboard event monitor for "/" key, Cmd+K, Cmd+F, and Ctrl+O
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                print("📥 ContentView received key event: '\(event.characters ?? "nil")' with modifiers: \(event.modifierFlags)")
+
+                // Check if "/" key is pressed (without modifiers)
+                if event.charactersIgnoringModifiers == "/" && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.option) {
+                    print("✅ / key detected, toggling chat popup")
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                        // Close command palette before opening chat
+                        appState.isCommandPaletteOpen = false
+                        appState.isChatPopupOpen.toggle()
+                    }
+                    return nil // Consume the event
+                }
+
                 // Check if Cmd+K is pressed
                 if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "k" {
+                    print("✅ Cmd+K detected, toggling command palette")
                     withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                        // Close chat popup before opening command palette
+                        appState.isChatPopupOpen = false
                         appState.isCommandPaletteOpen.toggle()
                     }
                     return nil // Consume the event
                 }
 
+                // Cmd+F is reserved for in-document search (to be implemented)
+                // For now, we let it pass through to the system default behavior
+
                 // Check if Ctrl+O is pressed (toggle view mode)
                 if event.modifierFlags.contains(.control) && event.charactersIgnoringModifiers == "o" {
+                    print("✅ Ctrl+O detected, toggling view mode")
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         appState.toggleViewMode()
                     }
                     return nil // Consume the event
                 }
 
-                // Check if "/" key is pressed (and not in a text field or command palette)
-                if event.characters == "/" && !isTypingInTextField() && !appState.isCommandPaletteOpen {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        appState.isChatOpen.toggle()
+                // Check if Cmd+? is pressed (help)
+                if event.modifierFlags.contains(.command) && event.modifierFlags.contains(.shift) && event.charactersIgnoringModifiers == "/" {
+                    print("✅ Cmd+? detected, opening help")
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                        appState.isHelpOpen = true
                     }
                     return nil // Consume the event
                 }
+
                 return event
+            }
+        }
+        .onDisappear {
+            // Clean up event monitor
+            if let monitor = eventMonitor {
+                NSEvent.removeMonitor(monitor)
+                eventMonitor = nil
             }
         }
     }

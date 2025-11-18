@@ -5,6 +5,8 @@ import Foundation
 class SearchService {
     private var searchIndex: [UUID: SearchIndexEntry] = [:]
     private var fileNameIndex: [String: Set<UUID>] = [:]
+    private var contentTokenIndex: [String: Set<UUID>] = [:] // Inverted index for content tokens
+    private var itemCache: [UUID: any FileSystemItem] = [:] // Cache item references
 
     struct SearchIndexEntry: Sendable {
         let itemID: UUID
@@ -57,11 +59,17 @@ class SearchService {
         )
 
         searchIndex[itemID] = entry
+        itemCache[itemID] = item // Cache the item reference
 
-        // Index filename
+        // Index filename tokens
         let nameTokens = tokenize(itemName)
         for token in nameTokens {
             fileNameIndex[token, default: []].insert(itemID)
+        }
+
+        // Index content tokens (for fast lookup)
+        for token in tokens {
+            contentTokenIndex[token, default: []].insert(itemID)
         }
     }
 
@@ -71,16 +79,42 @@ class SearchService {
         guard let rootFolder = rootFolder else { return [] }
 
         let queryTokens = tokenize(query)
-        var results: [SearchResult] = []
+        var candidateIDs = Set<UUID>()
 
-        // Search through all indexed entries
-        for (itemID, entry) in searchIndex {
+        // Fast path: Use inverted index to find candidate items
+        // Only search items that contain at least one query token
+        if !queryTokens.isEmpty {
+            for token in queryTokens {
+                // Check filename index
+                if let ids = fileNameIndex[token] {
+                    candidateIDs.formUnion(ids)
+                }
+                // Check content token index
+                if let ids = contentTokenIndex[token] {
+                    candidateIDs.formUnion(ids)
+                }
+            }
+        }
+
+        // If no candidates found via token matching, fall back to phrase search
+        // This handles exact phrase queries that may span multiple tokens
+        if candidateIDs.isEmpty {
+            candidateIDs = Set(searchIndex.keys)
+        }
+
+        var results: [SearchResult] = []
+        let lowercasedQuery = query.lowercased()
+
+        // Only search through candidate items (much smaller set)
+        for itemID in candidateIDs {
+            guard let entry = searchIndex[itemID] else { continue }
+
             var score = 0.0
             var matches: [SearchMatch] = []
 
             // Search in filename
             if filter.includeFilenames {
-                if entry.itemName.lowercased().contains(query.lowercased()) {
+                if entry.itemName.lowercased().contains(lowercasedQuery) {
                     score += 10.0 // High score for filename match
                     let context = "Filename: \(entry.itemName)"
                     matches.append(SearchMatch(
@@ -91,18 +125,20 @@ class SearchService {
                 }
             }
 
-            // Search in content
+            // Search in content (only if item has content)
             if filter.includeContent && !entry.content.isEmpty {
                 let contentMatches = findMatches(
                     in: entry.content,
                     for: query,
                     tokens: entry.tokens
                 )
-                matches.append(contentsOf: contentMatches)
-                score += Double(contentMatches.count) * 5.0
+                if !contentMatches.isEmpty {
+                    matches.append(contentsOf: contentMatches)
+                    score += Double(contentMatches.count) * 5.0
+                }
             }
 
-            // Token matching for relevance
+            // Token matching for relevance boost
             for token in queryTokens {
                 if entry.tokens.contains(token) {
                     score += 1.0
@@ -111,8 +147,8 @@ class SearchService {
 
             // If we have matches or score, create a result
             if score > 0 || !matches.isEmpty {
-                // Find the actual item in the folder tree
-                if let item = rootFolder.findItem(withID: itemID) {
+                // Use cached item reference instead of expensive tree traversal
+                if let item = itemCache[itemID] {
                     // Apply filters
                     if passesFilter(item, filter: filter) {
                         let result = SearchResult(
@@ -137,6 +173,8 @@ class SearchService {
     func clearIndex() {
         searchIndex.removeAll()
         fileNameIndex.removeAll()
+        contentTokenIndex.removeAll()
+        itemCache.removeAll()
     }
 
     // MARK: - Private Helpers
@@ -171,9 +209,18 @@ class SearchService {
         var searchRange = lowercasedText.startIndex..<lowercasedText.endIndex
 
         while let range = lowercasedText.range(of: lowercasedQuery, range: searchRange) {
-            let context = extractContext(from: text, around: range)
+            // Convert the range indices to UTF-16 offsets that are safe to use on both strings
+            let lowerOffset = lowercasedText.distance(from: lowercasedText.startIndex, to: range.lowerBound)
+            let upperOffset = lowercasedText.distance(from: lowercasedText.startIndex, to: range.upperBound)
+
+            // Create a corresponding range in the original text using the same offsets
+            let originalStart = text.index(text.startIndex, offsetBy: lowerOffset)
+            let originalEnd = text.index(text.startIndex, offsetBy: upperOffset)
+            let originalRange = originalStart..<originalEnd
+
+            let context = extractContext(from: text, around: originalRange)
             let match = SearchMatch(
-                range: range,
+                range: originalRange,
                 context: context,
                 lineNumber: nil
             )

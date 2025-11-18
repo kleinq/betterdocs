@@ -38,6 +38,12 @@ struct ContentView: View {
             }
             .background(Color(NSColor.windowBackgroundColor))
 
+            // Command Palette
+            CommandPaletteView(isOpen: Binding(
+                get: { appState.isCommandPaletteOpen },
+                set: { appState.isCommandPaletteOpen = $0 }
+            ))
+
             // Floating Chat Drawer
             FloatingChatDrawer(isOpen: Binding(
                 get: { appState.isChatOpen },
@@ -51,10 +57,18 @@ struct ContentView: View {
             UserDefaults.standard.set(newValue, forKey: "sidebarWidth")
         }
         .onAppear {
-            // Set up keyboard event monitor for "/" key
+            // Set up keyboard event monitor for "/" key and Cmd+K
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                // Check if "/" key is pressed (and not in a text field)
-                if event.characters == "/" && !isTypingInTextField() {
+                // Check if Cmd+K is pressed
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "k" {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                        appState.isCommandPaletteOpen.toggle()
+                    }
+                    return nil // Consume the event
+                }
+
+                // Check if "/" key is pressed (and not in a text field or command palette)
+                if event.characters == "/" && !isTypingInTextField() && !appState.isCommandPaletteOpen {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         appState.isChatOpen.toggle()
                     }

@@ -20,6 +20,7 @@ class AppState {
     // UI State
     var isOutlineVisible: Bool = UserDefaults.standard.bool(forKey: "isOutlineVisible")
     var isChatOpen: Bool = false
+    var isCommandPaletteOpen: Bool = false
 
     // Annotations
     var annotations: [Annotation] = []

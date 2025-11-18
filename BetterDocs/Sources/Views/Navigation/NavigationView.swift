@@ -1,10 +1,13 @@
 import SwiftUI
+import WebKit
 
 struct NavigationView: View {
     @Environment(AppState.self) private var appState
     @State private var selectedID: UUID?
     @State private var expandedFolders: Set<UUID> = []
+    @State private var expandedFolderPaths: Set<String> = [] // Persist by path instead of UUID
     @FocusState private var isFocused: Bool
+    @State private var localEventMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,18 +36,6 @@ struct NavigationView: View {
                 }
                 .focusable()
                 .focused($isFocused)
-                .onKeyPress(.downArrow) {
-                    navigateSearchResults(direction: .down)
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    navigateSearchResults(direction: .up)
-                    return .handled
-                }
-                .onKeyPress(.return) {
-                    openSelectedSearchResult()
-                    return .handled
-                }
             } else if appState.isSearching {
                 // No search results
                 VStack(spacing: 16) {
@@ -63,47 +54,35 @@ struct NavigationView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let rootFolder = appState.rootFolder {
                 // Show file tree or grid based on view mode
-                if appState.viewMode == .grid {
-                    GridView(folder: rootFolder)
-                } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            FileTreeItemView(
-                                item: rootFolder,
-                                level: 0,
-                                selectedID: $selectedID,
-                                expandedFolders: $expandedFolders
-                            )
+                Group {
+                    if appState.viewMode == .grid {
+                        GridView(folder: rootFolder)
+                    } else {
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    FileTreeItemView(
+                                        item: rootFolder,
+                                        level: 0,
+                                        selectedID: $selectedID,
+                                        expandedFolders: $expandedFolders
+                                    )
+                                }
+                                .padding(4)
+                            }
+                            .onChange(of: selectedID) { _, newID in
+                                // Scroll to selected item when selection changes
+                                if let id = newID {
+                                    withAnimation {
+                                        proxy.scrollTo(id, anchor: .center)
+                                    }
+                                }
+                            }
                         }
-                        .padding(4)
                     }
                 }
                 .focusable()
                 .focused($isFocused)
-                .onKeyPress(.downArrow) {
-                    navigateTree(direction: .down)
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    navigateTree(direction: .up)
-                    return .handled
-                }
-                .onKeyPress(.rightArrow) {
-                    expandSelectedFolder()
-                    return .handled
-                }
-                .onKeyPress(.leftArrow) {
-                    collapseSelectedFolder()
-                    return .handled
-                }
-                .onKeyPress(.return) {
-                    openSelectedItem()
-                    return .handled
-                }
-                .onKeyPress(.space) {
-                    toggleSelectedFolder()
-                    return .handled
-                }
             } else {
                 // Empty state
                 VStack(spacing: 16) {
@@ -126,6 +105,23 @@ struct NavigationView: View {
         .onAppear {
             // Auto-focus the navigation view when it appears
             isFocused = true
+
+            // Restore expanded folders from UserDefaults (if rootFolder already loaded)
+            if appState.rootFolder != nil {
+                restoreExpandedFolders()
+            }
+
+            // Set up local event monitor for arrow keys
+            localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                return handleKeyEvent(event)
+            }
+        }
+        .onDisappear {
+            // Remove event monitor
+            if let monitor = localEventMonitor {
+                NSEvent.removeMonitor(monitor)
+                localEventMonitor = nil
+            }
         }
         .onChange(of: selectedID) { _, newValue in
             if let id = newValue,
@@ -146,6 +142,88 @@ struct NavigationView: View {
                 }
             }
         }
+        .onChange(of: appState.rootFolder?.id) { oldValue, newValue in
+            // Folder was loaded or reloaded (e.g., on app launch or by file watcher)
+            if newValue != nil {
+                restoreExpandedFolders()
+                // Ensure currently selected item is visible
+                if let selectedID = selectedID, let folder = appState.rootFolder {
+                    expandPathToItem(selectedID, in: folder)
+                } else if oldValue == nil, let selectedItem = appState.selectedItem {
+                    // On initial load, expand to selected item from app state
+                    selectedID = selectedItem.id
+                    if let folder = appState.rootFolder {
+                        expandPathToItem(selectedItem.id, in: folder)
+                    }
+                }
+            }
+        }
+        .onChange(of: expandedFolders) { _, _ in
+            // Save expanded folders whenever they change
+            saveExpandedFolders()
+        }
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
+        // Only handle arrow keys when command palette is closed
+        guard !appState.isCommandPaletteOpen else {
+            return event
+        }
+
+        // Check if we're in a text field or webview (preview)
+        if let firstResponder = NSApp.keyWindow?.firstResponder,
+           firstResponder is NSText || firstResponder is NSTextView || firstResponder is WKWebView {
+            return event
+        }
+
+        switch event.keyCode {
+        case 125: // Down arrow
+            if appState.isSearching && !appState.searchResults.isEmpty {
+                navigateSearchResults(direction: .down)
+            } else if appState.rootFolder != nil && appState.viewMode == .list {
+                navigateTree(direction: .down)
+            }
+            return nil // Consume the event
+
+        case 126: // Up arrow
+            if appState.isSearching && !appState.searchResults.isEmpty {
+                navigateSearchResults(direction: .up)
+            } else if appState.rootFolder != nil && appState.viewMode == .list {
+                navigateTree(direction: .up)
+            }
+            return nil // Consume the event
+
+        case 124: // Right arrow
+            if !appState.isSearching && appState.rootFolder != nil && appState.viewMode == .list {
+                expandSelectedFolder()
+                return nil
+            }
+
+        case 123: // Left arrow
+            if !appState.isSearching && appState.rootFolder != nil && appState.viewMode == .list {
+                collapseSelectedFolder()
+                return nil
+            }
+
+        case 36: // Return/Enter
+            if appState.isSearching && !appState.searchResults.isEmpty {
+                openSelectedSearchResult()
+            } else if appState.rootFolder != nil && appState.viewMode == .list {
+                openSelectedItem()
+            }
+            return nil
+
+        case 49: // Space
+            if !appState.isSearching && appState.rootFolder != nil && appState.viewMode == .list {
+                toggleSelectedFolder()
+                return nil
+            }
+
+        default:
+            break
+        }
+
+        return event
     }
 
     private func expandPathToItem(_ itemID: UUID, in folder: Folder) {
@@ -312,6 +390,64 @@ struct NavigationView: View {
         }
         return nil
     }
+
+    // MARK: - Expanded Folders Persistence
+
+    private func saveExpandedFolders() {
+        guard let rootFolder = appState.rootFolder else { return }
+
+        // Convert UUIDs to paths for persistence (UUIDs change on reload)
+        var paths: Set<String> = []
+        for folderID in expandedFolders {
+            if let folder = rootFolder.findItem(withID: folderID) {
+                paths.insert(folder.path.path)
+            }
+        }
+
+        expandedFolderPaths = paths
+        let pathsArray = Array(paths)
+        UserDefaults.standard.set(pathsArray, forKey: "expandedFolderPaths")
+    }
+
+    private func restoreExpandedFolders() {
+        guard let rootFolder = appState.rootFolder else { return }
+
+        // Load persisted paths
+        if let savedPaths = UserDefaults.standard.array(forKey: "expandedFolderPaths") as? [String] {
+            expandedFolderPaths = Set(savedPaths)
+        }
+
+        // Convert paths back to UUIDs for current folder tree
+        var restoredFolders: Set<UUID> = []
+        for path in expandedFolderPaths {
+            if let item = findItemByPath(path, in: rootFolder), item.isFolder {
+                restoredFolders.insert(item.id)
+            }
+        }
+
+        expandedFolders = restoredFolders
+    }
+
+    private func findItemByPath(_ path: String, in folder: Folder) -> (any FileSystemItem)? {
+        // Check if this folder matches
+        if folder.path.path == path {
+            return folder
+        }
+
+        // Search children recursively
+        for child in folder.children {
+            if child.path.path == path {
+                return child
+            }
+
+            if let subfolder = child as? Folder,
+               let found = findItemByPath(path, in: subfolder) {
+                return found
+            }
+        }
+
+        return nil
+    }
 }
 
 struct FileTreeItemView: View {
@@ -413,6 +549,7 @@ struct FileTreeItemView: View {
                 }
             }
         }
+        .id(item.id) // Enable ScrollViewReader to find this item
     }
 
     private var backgroundColors: Color {

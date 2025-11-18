@@ -19,6 +19,9 @@ class AppState {
 
     // UI State
     var isOutlineVisible: Bool = UserDefaults.standard.bool(forKey: "isOutlineVisible")
+    var isChatOpen: Bool = false
+    var isCommandPaletteOpen: Bool = false
+    var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "list") ?? .list
 
     // Annotations
     var annotations: [Annotation] = []
@@ -133,6 +136,16 @@ class AppState {
     func toggleOutline() {
         isOutlineVisible.toggle()
         UserDefaults.standard.set(isOutlineVisible, forKey: "isOutlineVisible")
+    }
+
+    func toggleViewMode() {
+        viewMode = viewMode == .list ? .grid : .list
+        UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
+    }
+
+    func setViewMode(_ mode: ViewMode) {
+        viewMode = mode
+        UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
     }
 
     // MARK: - Annotation Management
@@ -537,4 +550,11 @@ struct DocumentTab: Identifiable, Equatable {
     static func == (lhs: DocumentTab, rhs: DocumentTab) -> Bool {
         lhs.id == rhs.id
     }
+}
+
+// MARK: - View Mode
+
+enum ViewMode: String {
+    case list
+    case grid
 }

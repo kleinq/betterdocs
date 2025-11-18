@@ -6,41 +6,93 @@ struct ContentView: View {
     @State private var sidebarWidth: CGFloat = UserDefaults.standard.double(forKey: "sidebarWidth") == 0 ? 350 : UserDefaults.standard.double(forKey: "sidebarWidth")
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Ribbon Toolbar
-            ToolbarView()
-                .frame(height: 50)
-
-            Divider()
-
+        ZStack {
             // Main Content Area
-            GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    // Navigation Sidebar
-                    NavigationView()
-                        .frame(width: navigationWidth)
+            VStack(spacing: 0) {
+                // Ribbon Toolbar
+                ToolbarView()
+                    .frame(height: 50)
 
-                    ResizableDivider(width: $navigationWidth, minWidth: 150, maxWidth: 400, isRightSidebar: false)
+                Divider()
 
-                    // Preview Pane
-                    PreviewView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Main Content Area
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        // Navigation Sidebar
+                        NavigationView()
+                            .frame(width: navigationWidth)
 
-                    ResizableDivider(width: $sidebarWidth, minWidth: 250, maxWidth: 600, isRightSidebar: true)
+                        ResizableDivider(width: $navigationWidth, minWidth: 150, maxWidth: 400, isRightSidebar: false)
 
-                    // Claude Sidebar
-                    ClaudeSidebarView()
-                        .frame(width: sidebarWidth)
+                        // Preview Pane
+                        PreviewView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        ResizableDivider(width: $sidebarWidth, minWidth: 250, maxWidth: 600, isRightSidebar: true)
+
+                        // Claude Sidebar (outline and annotations only now)
+                        ClaudeSidebarView()
+                            .frame(width: sidebarWidth)
+                    }
                 }
             }
+            .background(Color(NSColor.windowBackgroundColor))
+
+            // Command Palette
+            CommandPaletteView(isOpen: Binding(
+                get: { appState.isCommandPaletteOpen },
+                set: { appState.isCommandPaletteOpen = $0 }
+            ))
+
+            // Floating Chat Drawer
+            FloatingChatDrawer(isOpen: Binding(
+                get: { appState.isChatOpen },
+                set: { appState.isChatOpen = $0 }
+            ))
         }
-        .background(Color(NSColor.windowBackgroundColor))
         .onChange(of: navigationWidth) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "navigationWidth")
         }
         .onChange(of: sidebarWidth) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "sidebarWidth")
         }
+        .onAppear {
+            // Set up keyboard event monitor for "/" key, Cmd+K, and Ctrl+O
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                // Check if Cmd+K is pressed
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "k" {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                        appState.isCommandPaletteOpen.toggle()
+                    }
+                    return nil // Consume the event
+                }
+
+                // Check if Ctrl+O is pressed (toggle view mode)
+                if event.modifierFlags.contains(.control) && event.charactersIgnoringModifiers == "o" {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        appState.toggleViewMode()
+                    }
+                    return nil // Consume the event
+                }
+
+                // Check if "/" key is pressed (and not in a text field or command palette)
+                if event.characters == "/" && !isTypingInTextField() && !appState.isCommandPaletteOpen {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        appState.isChatOpen.toggle()
+                    }
+                    return nil // Consume the event
+                }
+                return event
+            }
+        }
+    }
+
+    // Helper to check if user is typing in a text field
+    private func isTypingInTextField() -> Bool {
+        if let firstResponder = NSApp.keyWindow?.firstResponder {
+            return firstResponder is NSText || firstResponder is NSTextView
+        }
+        return false
     }
 }
 

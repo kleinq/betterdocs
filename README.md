@@ -9,6 +9,33 @@ A modern document management system for macOS 15+ with integrated Claude Code ag
 - **Rich Preview**: Native document preview for all supported formats
 - **Claude Code Integration**: Execute Claude Code agent functions within document scope
 - **Native macOS Experience**: Built with SwiftUI for macOS 15+
+- **Comprehensive Keyboard Navigation**: Full keyboard support for efficient navigation
+
+## Keyboard Shortcuts
+
+### File Operations
+- `⌘O` - Open folder
+- `⌘R` - Reveal selected item in folder tree
+
+### Navigation
+- `↑ / ↓` - Navigate up/down through files and folders
+- `← / →` - Collapse/expand folders (or navigate to parent)
+- `Space` - Toggle folder expand/collapse
+- `Enter` - Open selected file in new tab
+
+### Search
+- `⌘F` - Focus search bar
+- `Esc` - Clear search and unfocus search bar
+- `↑ / ↓` - Navigate through search results (when searching)
+- `Enter` - Open selected search result
+
+### Tabs
+- `⌘W` - Close active tab
+- `⌘⇧]` - Next tab
+- `⌘⇧[` - Previous tab
+
+### View
+- `⌘⇧L` - Toggle document outline
 
 ## Architecture
 

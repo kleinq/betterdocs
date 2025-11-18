@@ -41,13 +41,49 @@ struct BetterDocsApp: App {
                 // Don't add keyboard shortcut here - handled by NSEvent monitor
                 .disabled(appState.activeTabID == nil ||
                          !appState.openTabs.contains(where: { $0.id == appState.activeTabID }))
+
+                Divider()
+
+                Button("Next Tab") {
+                    appState.selectNextTab()
+                }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .disabled(appState.openTabs.count <= 1)
+
+                Button("Previous Tab") {
+                    appState.selectPreviousTab()
+                }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .disabled(appState.openTabs.count <= 1)
             }
 
             CommandGroup(before: .sidebar) {
+                Button("Find...") {
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("FocusSearch"),
+                        object: nil
+                    )
+                }
+                .keyboardShortcut("f", modifiers: .command)
+
+                Divider()
+
                 Button(appState.isOutlineVisible ? "Hide Document Outline" : "Show Document Outline") {
                     appState.toggleOutline()
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Button("Reveal in Files") {
+                    if let selectedItem = appState.selectedItem {
+                        // The reveal functionality will be handled by posting a notification
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("RevealInTree"),
+                            object: selectedItem.id
+                        )
+                    }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(appState.selectedItem == nil)
             }
 
             CommandGroup(replacing: .help) {

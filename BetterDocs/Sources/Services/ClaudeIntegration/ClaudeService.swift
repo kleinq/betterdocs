@@ -23,9 +23,9 @@ class ClaudeService {
 
         // Log which method we're using
         if usesCLI {
-            print("✅ Using Claude Code CLI for Agent SDK features")
+            logInfo("✅ Using Claude Code CLI for Agent SDK features")
         } else {
-            print("⚠️ Using API key method (CLI disabled due to interactive mode)")
+            logWarning("⚠️ Using API key method (CLI disabled due to interactive mode)")
         }
     }
 
@@ -50,7 +50,7 @@ class ClaudeService {
         do {
             return try await cli.checkAuthStatus()
         } catch {
-            print("⚠️ Failed to check authentication status: \(error)")
+            logWarning("⚠️ Failed to check authentication status: \(error)")
             return false
         }
     }
@@ -68,19 +68,19 @@ class ClaudeService {
     func sendMessage(_ message: String, context: (any FileSystemItem)?) async throws -> String {
         if usesCLI {
             // Use streaming internally and collect the full response
-            print("[CLAUDE-SERVICE] Using CLI method")
+            logDebug("[CLAUDE-SERVICE] Using CLI method")
             let stream = try await sendMessageStreamingViaCLI(message, context: context)
             var fullResponse = ""
             var chunkCount = 0
             for await chunk in stream {
                 chunkCount += 1
-                print("[CLAUDE-SERVICE] Received chunk #\(chunkCount): \(chunk.prefix(50))...")
+                logDebug("[CLAUDE-SERVICE] Received chunk #\(chunkCount): \(chunk.prefix(50))...")
                 fullResponse += chunk
             }
-            print("[CLAUDE-SERVICE] Stream finished. Total chunks: \(chunkCount), Response length: \(fullResponse.count)")
+            logDebug("[CLAUDE-SERVICE] Stream finished. Total chunks: \(chunkCount), Response length: \(fullResponse.count)")
             return fullResponse.isEmpty ? "No response from Claude (stream ended with 0 chunks)" : fullResponse
         } else {
-            print("[CLAUDE-SERVICE] Using API method")
+            logDebug("[CLAUDE-SERVICE] Using API method")
             return try await sendMessageViaAPI(message, context: context)
         }
     }
@@ -106,6 +106,20 @@ class ClaudeService {
         } else {
             // For API fallback, just return the full response at once (no tool tracking)
             let response = try await sendMessageViaAPI(message, context: context)
+            return AsyncStream { continuation in
+                continuation.yield(response)
+                continuation.finish()
+            }
+        }
+    }
+
+    /// Send a message with streaming, audit callback, and multiple context items
+    func sendMessageStreamingWithAudit(_ message: String, contextItems: [any FileSystemItem], onToolUse: @escaping @MainActor ([String: Any]) -> Void) async throws -> AsyncStream<String> {
+        if usesCLI {
+            return try await sendMessageStreamingViaCLIWithAudit(message, contextItems: contextItems, onToolUse: onToolUse)
+        } else {
+            // For API fallback, just return the full response at once (no tool tracking)
+            let response = try await sendMessageViaAPI(message, contextItems: contextItems)
             return AsyncStream { continuation in
                 continuation.yield(response)
                 continuation.finish()
@@ -167,7 +181,7 @@ class ClaudeService {
 
         // Create the prompt
         let prompt = buildPrompt(message: message, context: contextText)
-        print("[SWIFT] Sending message via CLI: \(message)")
+        logDebug("[SWIFT] Sending message via CLI: \(message)")
 
         // Use the agent wrapper to call Claude Agent SDK
         return AsyncStream { continuation in
@@ -179,7 +193,7 @@ class ClaudeService {
                     let bundledPath = "\(resourcePath)/claude-agent-sdk/agent-wrapper.mjs"
                     if FileManager.default.fileExists(atPath: bundledPath) {
                         wrapperPath = bundledPath
-                        print("[SWIFT] Using bundled wrapper at: \(bundledPath)")
+                        logDebug("[SWIFT] Using bundled wrapper at: \(bundledPath)")
                     }
                 }
 
@@ -188,24 +202,45 @@ class ClaudeService {
                     let devPath = "/Users/robertwinder/Projects/betterdocs/BetterDocs/Resources/claude-agent-sdk/agent-wrapper.mjs"
                     if FileManager.default.fileExists(atPath: devPath) {
                         wrapperPath = devPath
-                        print("[SWIFT] Using development wrapper at: \(devPath)")
+                        logDebug("[SWIFT] Using development wrapper at: \(devPath)")
                     }
                 }
 
                 guard let finalWrapperPath = wrapperPath else {
-                    print("[SWIFT] Error: Could not find agent-wrapper.mjs")
+                    logError("[SWIFT] Error: Could not find agent-wrapper.mjs")
                     continuation.yield("Error: Claude Agent SDK wrapper not found")
                     continuation.finish()
                     return
                 }
 
-                print("[SWIFT] Wrapper path: \(finalWrapperPath)")
-                print("[SWIFT] Prompt: \(prompt)")
+                logDebug("[SWIFT] Wrapper path: \(finalWrapperPath)")
+                logDebug("[SWIFT] Prompt: \(prompt)")
+
+                // Find node path
+                let nodePath = Self.findNodePath()
+                logDebug("[SWIFT] Node path: \(nodePath ?? "not found")")
+
+                guard let finalNodePath = nodePath else {
+                    logError("[SWIFT] Error: Could not find node executable")
+                    continuation.yield("Error: Node.js not found. Please install Node.js from https://nodejs.org/")
+                    continuation.finish()
+                    return
+                }
 
                 // Run the wrapper with node
                 let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                task.arguments = ["node", finalWrapperPath, prompt]
+                task.executableURL = URL(fileURLWithPath: finalNodePath)
+                task.arguments = [finalWrapperPath, prompt]
+
+                // Set up PATH environment to include common node locations
+                var environment = ProcessInfo.processInfo.environment
+                let nodeBinDir = (finalNodePath as NSString).deletingLastPathComponent
+                if let existingPath = environment["PATH"] {
+                    environment["PATH"] = "\(nodeBinDir):\(existingPath)"
+                } else {
+                    environment["PATH"] = nodeBinDir
+                }
+                task.environment = environment
 
                 let outputPipe = Pipe()
                 let errorPipe = Pipe()
@@ -213,76 +248,76 @@ class ClaudeService {
                 task.standardError = errorPipe
 
                 do {
-                    print("[SWIFT] Starting node process...")
+                    logDebug("[SWIFT] Starting node process...")
                     try task.run()
-                    print("[SWIFT] Process started with PID: \(task.processIdentifier)")
+                    logDebug("[SWIFT] Process started with PID: \(task.processIdentifier)")
 
                     // Read stderr in background to monitor wrapper debug output
                     Task {
                         let errorHandle = errorPipe.fileHandleForReading
                         for try await line in errorHandle.bytes.lines {
-                            print("[WRAPPER-STDERR] \(line)")
+                            logDebug("[WRAPPER-STDERR] \(line)")
                         }
                     }
 
                     // Read output asynchronously using async bytes API
                     let handle = outputPipe.fileHandleForReading
-                    print("[SWIFT] Reading output from stdout...")
+                    logDebug("[SWIFT] Reading output from stdout...")
 
                     var lineCount = 0
                     // Use async iteration over file handle bytes
                     for try await line in handle.bytes.lines {
                         lineCount += 1
-                        print("[SWIFT] Line #\(lineCount): \(line.isEmpty ? "(empty)" : line.prefix(100))")
+                        logDebug("[SWIFT] Line #\(lineCount): \(line.isEmpty ? "(empty)" : line.prefix(100))")
 
                         guard !line.isEmpty else { continue }
 
                         // Try to parse JSON response
                         if let data = line.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            print("[SWIFT] Parsed JSON: \(json)")
+                            logDebug("[SWIFT] Parsed JSON: \(json)")
 
                             // Check message type from wrapper
                             if let messageType = json["type"] as? String {
                                 if messageType == "text", let content = json["content"] as? String {
-                                    print("[SWIFT] Yielding text content: \(content.prefix(50))...")
+                                    logDebug("[SWIFT] Yielding text content: \(content.prefix(50))...")
                                     continuation.yield(content)
                                 } else if messageType == "result" {
-                                    print("[SWIFT] Received result message")
+                                    logDebug("[SWIFT] Received result message")
                                     // Don't yield anything for result messages
                                 } else if messageType == "tool_use" {
-                                    print("[SWIFT] Tool use detected: \(json["tool"] ?? "unknown")")
+                                    logDebug("[SWIFT] Tool use detected: \(json["tool"] ?? "unknown")")
                                     // Don't yield tool use messages
                                 } else if messageType == "error" {
-                                    print("[SWIFT] Error message: \(json["error"] ?? "unknown")")
+                                    logError("[SWIFT] Error message: \(json["error"] ?? "unknown")")
                                     continuation.yield("Error: \(json["error"] as? String ?? "Unknown error")")
                                 } else {
-                                    print("[SWIFT] Unknown message type: \(messageType)")
+                                    logDebug("[SWIFT] Unknown message type: \(messageType)")
                                 }
                             } else {
-                                print("[SWIFT] No type field found in JSON")
+                                logDebug("[SWIFT] No type field found in JSON")
                             }
                         } else {
-                            print("[SWIFT] Failed to parse JSON from line: \(line.prefix(100))")
+                            logDebug("[SWIFT] Failed to parse JSON from line: \(line.prefix(100))")
                         }
                     }
 
-                    print("[SWIFT] Finished reading stdout. Total lines: \(lineCount)")
+                    logDebug("[SWIFT] Finished reading stdout. Total lines: \(lineCount)")
 
                     // Wait for process to complete
                     task.waitUntilExit()
 
                     // Check exit code
                     if task.terminationStatus != 0 {
-                        print("[SWIFT] Process exited with code: \(task.terminationStatus)")
+                        logError("[SWIFT] Process exited with code: \(task.terminationStatus)")
                     } else {
-                        print("[SWIFT] Process finished successfully")
+                        logDebug("[SWIFT] Process finished successfully")
                     }
 
                     continuation.finish()
 
                 } catch {
-                    print("[SWIFT] Error: \(error.localizedDescription)")
+                    logError("[SWIFT] Error: \(error.localizedDescription)")
                     continuation.yield("Error: \(error.localizedDescription)")
                     continuation.finish()
                 }
@@ -300,7 +335,7 @@ class ClaudeService {
 
         // Create the prompt
         let prompt = buildPrompt(message: message, context: contextText)
-        print("[SWIFT] Sending message via CLI with audit: \(message)")
+        logDebug("[SWIFT] Sending message via CLI with audit: \(message)")
 
         // Use the agent wrapper to call Claude Agent SDK
         return AsyncStream { continuation in
@@ -312,7 +347,7 @@ class ClaudeService {
                     let bundledPath = "\(resourcePath)/claude-agent-sdk/agent-wrapper.mjs"
                     if FileManager.default.fileExists(atPath: bundledPath) {
                         wrapperPath = bundledPath
-                        print("[SWIFT] Using bundled wrapper at: \(bundledPath)")
+                        logDebug("[SWIFT] Using bundled wrapper at: \(bundledPath)")
                     }
                 }
 
@@ -321,24 +356,45 @@ class ClaudeService {
                     let devPath = "/Users/robertwinder/Projects/betterdocs/BetterDocs/Resources/claude-agent-sdk/agent-wrapper.mjs"
                     if FileManager.default.fileExists(atPath: devPath) {
                         wrapperPath = devPath
-                        print("[SWIFT] Using development wrapper at: \(devPath)")
+                        logDebug("[SWIFT] Using development wrapper at: \(devPath)")
                     }
                 }
 
                 guard let finalWrapperPath = wrapperPath else {
-                    print("[SWIFT] Error: Could not find agent-wrapper.mjs")
+                    logError("[SWIFT] Error: Could not find agent-wrapper.mjs")
                     continuation.yield("Error: Claude Agent SDK wrapper not found")
                     continuation.finish()
                     return
                 }
 
-                print("[SWIFT] Wrapper path: \(finalWrapperPath)")
-                print("[SWIFT] Prompt: \(prompt)")
+                logDebug("[SWIFT] Wrapper path: \(finalWrapperPath)")
+                logDebug("[SWIFT] Prompt: \(prompt)")
+
+                // Find node path
+                let nodePath = Self.findNodePath()
+                logDebug("[SWIFT] Node path: \(nodePath ?? "not found")")
+
+                guard let finalNodePath = nodePath else {
+                    logError("[SWIFT] Error: Could not find node executable")
+                    continuation.yield("Error: Node.js not found. Please install Node.js from https://nodejs.org/")
+                    continuation.finish()
+                    return
+                }
 
                 // Run the wrapper with node
                 let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                task.arguments = ["node", finalWrapperPath, prompt]
+                task.executableURL = URL(fileURLWithPath: finalNodePath)
+                task.arguments = [finalWrapperPath, prompt]
+
+                // Set up PATH environment to include common node locations
+                var environment = ProcessInfo.processInfo.environment
+                let nodeBinDir = (finalNodePath as NSString).deletingLastPathComponent
+                if let existingPath = environment["PATH"] {
+                    environment["PATH"] = "\(nodeBinDir):\(existingPath)"
+                } else {
+                    environment["PATH"] = nodeBinDir
+                }
+                task.environment = environment
 
                 let outputPipe = Pipe()
                 let errorPipe = Pipe()
@@ -346,45 +402,45 @@ class ClaudeService {
                 task.standardError = errorPipe
 
                 do {
-                    print("[SWIFT] Starting node process...")
+                    logDebug("[SWIFT] Starting node process...")
                     try task.run()
-                    print("[SWIFT] Process started with PID: \(task.processIdentifier)")
+                    logDebug("[SWIFT] Process started with PID: \(task.processIdentifier)")
 
                     // Read stderr in background to monitor wrapper debug output
                     Task {
                         let errorHandle = errorPipe.fileHandleForReading
                         for try await line in errorHandle.bytes.lines {
-                            print("[WRAPPER-STDERR] \(line)")
+                            logDebug("[WRAPPER-STDERR] \(line)")
                         }
                     }
 
                     // Read output asynchronously using async bytes API
                     let handle = outputPipe.fileHandleForReading
-                    print("[SWIFT] Reading output from stdout...")
+                    logDebug("[SWIFT] Reading output from stdout...")
 
                     var lineCount = 0
                     // Use async iteration over file handle bytes
                     for try await line in handle.bytes.lines {
                         lineCount += 1
-                        print("[SWIFT] Line #\(lineCount): \(line.isEmpty ? "(empty)" : line.prefix(100))")
+                        logDebug("[SWIFT] Line #\(lineCount): \(line.isEmpty ? "(empty)" : line.prefix(100))")
 
                         guard !line.isEmpty else { continue }
 
                         // Try to parse JSON response
                         if let data = line.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            print("[SWIFT] Parsed JSON: \(json)")
+                            logDebug("[SWIFT] Parsed JSON: \(json)")
 
                             // Check message type from wrapper
                             if let messageType = json["type"] as? String {
                                 if messageType == "text", let content = json["content"] as? String {
-                                    print("[SWIFT] Yielding text content: \(content.prefix(50))...")
+                                    logDebug("[SWIFT] Yielding text content: \(content.prefix(50))...")
                                     continuation.yield(content)
                                 } else if messageType == "result" {
-                                    print("[SWIFT] Received result message")
+                                    logDebug("[SWIFT] Received result message")
                                     // Don't yield anything for result messages
                                 } else if messageType == "tool_use" {
-                                    print("[SWIFT] Tool use detected: \(json["tool"] ?? "unknown")")
+                                    logDebug("[SWIFT] Tool use detected: \(json["tool"] ?? "unknown")")
                                     // Call the audit callback on MainActor
                                     // Extract necessary fields - use nonisolated(unsafe) to bypass concurrency checking
                                     // This is safe because the dictionary is created locally and immediately consumed
@@ -397,35 +453,196 @@ class ClaudeService {
                                     }
                                     // Don't yield tool use messages
                                 } else if messageType == "error" {
-                                    print("[SWIFT] Error message: \(json["error"] ?? "unknown")")
+                                    logError("[SWIFT] Error message: \(json["error"] ?? "unknown")")
                                     continuation.yield("Error: \(json["error"] as? String ?? "Unknown error")")
                                 } else {
-                                    print("[SWIFT] Unknown message type: \(messageType)")
+                                    logDebug("[SWIFT] Unknown message type: \(messageType)")
                                 }
                             } else {
-                                print("[SWIFT] No type field found in JSON")
+                                logDebug("[SWIFT] No type field found in JSON")
                             }
                         } else {
-                            print("[SWIFT] Failed to parse JSON from line: \(line.prefix(100))")
+                            logDebug("[SWIFT] Failed to parse JSON from line: \(line.prefix(100))")
                         }
                     }
 
-                    print("[SWIFT] Finished reading stdout. Total lines: \(lineCount)")
+                    logDebug("[SWIFT] Finished reading stdout. Total lines: \(lineCount)")
 
                     // Wait for process to complete
                     task.waitUntilExit()
 
                     // Check exit code
                     if task.terminationStatus != 0 {
-                        print("[SWIFT] Process exited with code: \(task.terminationStatus)")
+                        logError("[SWIFT] Process exited with code: \(task.terminationStatus)")
                     } else {
-                        print("[SWIFT] Process finished successfully")
+                        logDebug("[SWIFT] Process finished successfully")
                     }
 
                     continuation.finish()
 
                 } catch {
-                    print("[SWIFT] Error: \(error.localizedDescription)")
+                    logError("[SWIFT] Error: \(error.localizedDescription)")
+                    continuation.yield("Error: \(error.localizedDescription)")
+                    continuation.finish()
+                }
+            }
+        }
+    }
+
+    /// Send message via CLI with streaming, audit callback, and multiple context items
+    private func sendMessageStreamingViaCLIWithAudit(_ message: String, contextItems: [any FileSystemItem], onToolUse: @escaping @MainActor ([String: Any]) -> Void) async throws -> AsyncStream<String> {
+        // Build context from multiple items
+        let contextText = buildContext(for: contextItems)
+
+        // Create the prompt
+        let prompt = buildPrompt(message: message, context: contextText)
+        logDebug("[SWIFT] Sending message via CLI with audit and \(contextItems.count) context items: \(message)")
+
+        // Use the agent wrapper to call Claude Agent SDK
+        return AsyncStream { continuation in
+            Task.detached {
+                // Get the wrapper path - try bundle first, then development location
+                var wrapperPath: String?
+
+                if let resourcePath = Bundle.main.resourcePath {
+                    let bundledPath = "\(resourcePath)/claude-agent-sdk/agent-wrapper.mjs"
+                    if FileManager.default.fileExists(atPath: bundledPath) {
+                        wrapperPath = bundledPath
+                        logDebug("[SWIFT] Using bundled wrapper at: \(bundledPath)")
+                    }
+                }
+
+                // Fallback to development location
+                if wrapperPath == nil {
+                    let devPath = "/Users/robertwinder/Projects/betterdocs/BetterDocs/Resources/claude-agent-sdk/agent-wrapper.mjs"
+                    if FileManager.default.fileExists(atPath: devPath) {
+                        wrapperPath = devPath
+                        logDebug("[SWIFT] Using development wrapper at: \(devPath)")
+                    }
+                }
+
+                guard let finalWrapperPath = wrapperPath else {
+                    logError("[SWIFT] Error: Could not find agent-wrapper.mjs")
+                    continuation.yield("Error: Claude Agent SDK wrapper not found")
+                    continuation.finish()
+                    return
+                }
+
+                logDebug("[SWIFT] Wrapper path: \(finalWrapperPath)")
+                logDebug("[SWIFT] Prompt: \(prompt)")
+
+                // Find node path
+                let nodePath = Self.findNodePath()
+                logDebug("[SWIFT] Node path: \(nodePath ?? "not found")")
+
+                guard let finalNodePath = nodePath else {
+                    logError("[SWIFT] Error: Could not find node executable")
+                    continuation.yield("Error: Node.js not found. Please install Node.js from https://nodejs.org/")
+                    continuation.finish()
+                    return
+                }
+
+                // Run the wrapper with node
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: finalNodePath)
+                task.arguments = [finalWrapperPath, prompt]
+
+                // Set up PATH environment to include common node locations
+                var environment = ProcessInfo.processInfo.environment
+                let nodeBinDir = (finalNodePath as NSString).deletingLastPathComponent
+                if let existingPath = environment["PATH"] {
+                    environment["PATH"] = "\(nodeBinDir):\(existingPath)"
+                } else {
+                    environment["PATH"] = nodeBinDir
+                }
+                task.environment = environment
+
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                task.standardOutput = outputPipe
+                task.standardError = errorPipe
+
+                do {
+                    logDebug("[SWIFT] Starting node process...")
+                    try task.run()
+                    logDebug("[SWIFT] Process started with PID: \(task.processIdentifier)")
+
+                    // Read stderr in background to monitor wrapper debug output
+                    Task {
+                        let errorHandle = errorPipe.fileHandleForReading
+                        for try await line in errorHandle.bytes.lines {
+                            logDebug("[WRAPPER-STDERR] \(line)")
+                        }
+                    }
+
+                    // Read output asynchronously using async bytes API
+                    let handle = outputPipe.fileHandleForReading
+                    logDebug("[SWIFT] Reading output from stdout...")
+
+                    var lineCount = 0
+                    // Use async iteration over file handle bytes
+                    for try await line in handle.bytes.lines {
+                        lineCount += 1
+                        logDebug("[SWIFT] Line #\(lineCount): \(line.isEmpty ? "(empty)" : line.prefix(100))")
+
+                        guard !line.isEmpty else { continue }
+
+                        // Try to parse JSON response
+                        if let data = line.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            logDebug("[SWIFT] Parsed JSON: \(json)")
+
+                            // Check message type from wrapper
+                            if let messageType = json["type"] as? String {
+                                if messageType == "text", let content = json["content"] as? String {
+                                    logDebug("[SWIFT] Yielding text content: \(content.prefix(50))...")
+                                    continuation.yield(content)
+                                } else if messageType == "result" {
+                                    logDebug("[SWIFT] Received result message")
+                                    // Don't yield anything for result messages
+                                } else if messageType == "tool_use" {
+                                    logDebug("[SWIFT] Tool use detected: \(json["tool"] ?? "unknown")")
+                                    // Call the audit callback on MainActor
+                                    // Extract necessary fields - use nonisolated(unsafe) to bypass concurrency checking
+                                    // This is safe because the dictionary is created locally and immediately consumed
+                                    if let tool = json["tool"] as? String,
+                                       let input = json["input"] as? [String: Any] {
+                                        nonisolated(unsafe) let toolData: [String: Any] = ["tool": tool, "input": input]
+                                        await MainActor.run {
+                                            onToolUse(toolData)
+                                        }
+                                    }
+                                    // Don't yield tool use messages
+                                } else if messageType == "error" {
+                                    logError("[SWIFT] Error message: \(json["error"] ?? "unknown")")
+                                    continuation.yield("Error: \(json["error"] as? String ?? "Unknown error")")
+                                } else {
+                                    logDebug("[SWIFT] Unknown message type: \(messageType)")
+                                }
+                            } else {
+                                logDebug("[SWIFT] No type field found in JSON")
+                            }
+                        } else {
+                            logDebug("[SWIFT] Failed to parse JSON from line: \(line.prefix(100))")
+                        }
+                    }
+
+                    logDebug("[SWIFT] Finished reading stdout. Total lines: \(lineCount)")
+
+                    // Wait for process to complete
+                    task.waitUntilExit()
+
+                    // Check exit code
+                    if task.terminationStatus != 0 {
+                        logError("[SWIFT] Process exited with code: \(task.terminationStatus)")
+                    } else {
+                        logDebug("[SWIFT] Process finished successfully")
+                    }
+
+                    continuation.finish()
+
+                } catch {
+                    logError("[SWIFT] Error: \(error.localizedDescription)")
                     continuation.yield("Error: \(error.localizedDescription)")
                     continuation.finish()
                 }
@@ -444,6 +661,30 @@ class ClaudeService {
         if let context = context {
             contextText = buildContext(for: context)
         }
+
+        // Create the prompt
+        let prompt = buildPrompt(message: message, context: contextText)
+
+        // Add to conversation history
+        conversationHistory.append(Message(role: "user", content: prompt))
+
+        // Make API call
+        let response = try await callClaudeAPI(messages: conversationHistory)
+
+        // Add response to history
+        conversationHistory.append(Message(role: "assistant", content: response))
+
+        return response
+    }
+
+    /// Send message using API key with multiple context items (fallback)
+    private func sendMessageViaAPI(_ message: String, contextItems: [any FileSystemItem]) async throws -> String {
+        guard let apiKey = apiKey, !apiKey.isEmpty else {
+            return "Please configure your Claude API key in Settings or install Claude Code CLI to use this feature."
+        }
+
+        // Build context from multiple items
+        let contextText = buildContext(for: contextItems)
 
         // Create the prompt
         let prompt = buildPrompt(message: message, context: contextText)
@@ -516,6 +757,49 @@ class ClaudeService {
         return context
     }
 
+    private func buildContext(for items: [any FileSystemItem]) -> String {
+        guard !items.isEmpty else { return "" }
+
+        var context = "Context includes \(items.count) file(s) and folder(s):\n\n"
+
+        for (index, item) in items.enumerated() {
+            context += "--- File \(index + 1) of \(items.count) ---\n"
+            context += "Name: \(item.name)\n"
+            context += "Path: \(item.path.path)\n"
+
+            if let document = item as? Document {
+                context += "Type: \(document.type.displayName)\n"
+                context += "Size: \(document.formattedSize)\n\n"
+
+                if let content = document.content, !content.isEmpty {
+                    // Limit content length per file to keep total context manageable
+                    let maxLength = 30000 // Smaller limit per file when multiple files
+                    if content.count > maxLength {
+                        let truncated = String(content.prefix(maxLength))
+                        context += "Content (truncated):\n\(truncated)\n...[truncated]\n\n"
+                    } else {
+                        context += "Content:\n\(content)\n\n"
+                    }
+                }
+            } else if let folder = item as? Folder {
+                context += "Type: Folder\n"
+                context += "Contains: \(folder.documentCount) files, \(folder.folderCount) folders\n\n"
+
+                context += "Contents:\n"
+                for child in folder.children.prefix(50) {
+                    context += "- \(child.name)\n"
+                }
+                context += "\n"
+            }
+
+            if index < items.count - 1 {
+                context += "\n"
+            }
+        }
+
+        return context
+    }
+
     private func buildPrompt(message: String, context: String) -> String {
         if context.isEmpty {
             return message
@@ -566,11 +850,119 @@ class ClaudeService {
         return text
     }
 
+    /// Generate a descriptive filename based on content
+    func generateFilename(content: String, fileType: String) async throws -> String {
+        let prompt = """
+        Generate a concise, descriptive filename (without extension) for a document with the following content. \
+        The filename should be 2-5 words, use hyphens instead of spaces, and be lowercase. \
+        Only respond with the filename, nothing else.
+
+        Content preview:
+        \(content.prefix(500))
+        """
+
+        do {
+            let response = try await sendMessage(prompt, context: nil)
+            // Clean up the response
+            let cleaned = response
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "-")
+                .lowercased()
+                .replacingOccurrences(of: "[^a-z0-9-]", with: "", options: .regularExpression)
+
+            // Ensure it's not empty and not too long
+            let truncated = String(cleaned.prefix(50))
+            return truncated.isEmpty ? "untitled" : truncated
+        } catch {
+            logWarning("Failed to generate filename with Claude: \(error)")
+            // Fallback to timestamp-based name
+            let timestamp = Date().timeIntervalSince1970
+            return "document-\(Int(timestamp))"
+        }
+    }
+
     /// Stop current CLI session
     func stopSession() {
         guard usesCLI else { return }
         cli.stopSession()
         currentSessionID = nil
+    }
+
+    /// Find the node executable path
+    private nonisolated static func findNodePath() -> String? {
+        // Common node installation locations
+        let possiblePaths = [
+            "/usr/local/bin/node",
+            "/opt/homebrew/bin/node",
+            "/usr/bin/node",
+            "\(NSHomeDirectory())/.nvm/versions/node/*/bin/node"
+        ]
+
+        // Check each path
+        for path in possiblePaths {
+            if path.contains("*") {
+                // Handle glob patterns (e.g., nvm installations)
+                if let expanded = expandGlobPath(path) {
+                    return expanded
+                }
+            } else if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        // Try using 'which node' as fallback
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "which node"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            if task.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !path.isEmpty {
+                    return path
+                }
+            }
+        } catch {
+            logDebug("[SWIFT] Failed to run 'which node': \(error)")
+        }
+
+        return nil
+    }
+
+    /// Expand glob pattern to find first matching path
+    private nonisolated static func expandGlobPath(_ pattern: String) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "ls -1 \(pattern) 2>/dev/null | head -n 1"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            if task.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !path.isEmpty {
+                    return path
+                }
+            }
+        } catch {
+            logDebug("[SWIFT] Failed to expand glob: \(error)")
+        }
+
+        return nil
     }
 }
 

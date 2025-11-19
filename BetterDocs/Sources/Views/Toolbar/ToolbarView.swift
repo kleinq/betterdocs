@@ -2,8 +2,7 @@ import SwiftUI
 
 struct ToolbarView: View {
     @Environment(AppState.self) private var appState
-    @State private var searchText: String = ""
-    @FocusState private var isSearchFocused: Bool
+    @State private var showingFileCreationSheet = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -17,7 +16,27 @@ struct ToolbarView: View {
                 Divider()
                     .frame(height: 24)
 
-                Button(action: { /* TODO */ }) {
+                // New file button with dropdown menu
+                Menu {
+                    Button(action: { createNewFile(.markdown) }) {
+                        Label("New Markdown File", systemImage: "doc.badge.plus")
+                    }
+
+                    Button(action: { createNewFile(.plainText) }) {
+                        Label("New Text File", systemImage: "doc.text.badge.plus")
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Create new file")
+                .disabled(appState.selectedItem == nil || !appState.selectedItem!.isFolder)
+
+                Divider()
+                    .frame(height: 24)
+
+                Button(action: {
+                    Task { await appState.refreshFolder() }
+                }) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Refresh")
@@ -54,46 +73,6 @@ struct ToolbarView: View {
 
             Spacer()
 
-            // Search bar
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-
-                TextField("Search files and content...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .frame(width: 300)
-                    .focused($isSearchFocused)
-                    .onChange(of: searchText) { _, newValue in
-                        appState.search(newValue)
-                    }
-                    .onKeyPress(.escape) {
-                        searchText = ""
-                        appState.clearSearch()
-                        isSearchFocused = false
-                        return .handled
-                    }
-
-                if !searchText.isEmpty {
-                    Button(action: {
-                        searchText = ""
-                        appState.clearSearch()
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FocusSearch"))) { _ in
-                isSearchFocused = true
-            }
-
-            Spacer()
-
             // Settings
             Button(action: { openSettings() }) {
                 Image(systemName: "gear")
@@ -107,6 +86,32 @@ struct ToolbarView: View {
 
     private func openSettings() {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    private func createNewFile(_ fileType: FileType) {
+        guard let selectedFolder = appState.selectedItem as? Folder else {
+            // If selected item is not a folder, try to find its parent
+            if let selectedItem = appState.selectedItem,
+               let rootFolder = appState.rootFolder,
+               let parentFolder = findParentFolder(of: selectedItem, in: rootFolder) {
+                appState.createNewFile(in: parentFolder, fileType: fileType)
+            }
+            return
+        }
+        appState.createNewFile(in: selectedFolder, fileType: fileType)
+    }
+
+    private func findParentFolder(of item: any FileSystemItem, in folder: Folder) -> Folder? {
+        for child in folder.children {
+            if child.id == item.id {
+                return folder
+            }
+            if let subfolder = child as? Folder,
+               let found = findParentFolder(of: item, in: subfolder) {
+                return found
+            }
+        }
+        return nil
     }
 }
 

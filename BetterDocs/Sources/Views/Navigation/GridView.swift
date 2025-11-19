@@ -34,8 +34,15 @@ struct GridItemView: View {
     @Environment(AppState.self) private var appState
     let item: any FileSystemItem
 
+    @State private var isDropTarget: Bool = false
+    @State private var showingFileCreationSheet: Bool = false
+
     private var isSelected: Bool {
         appState.selectedItem?.id == item.id
+    }
+
+    private var folder: Folder? {
+        item as? Folder
     }
 
     var body: some View {
@@ -54,7 +61,7 @@ struct GridItemView: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                    .stroke(borderColor, lineWidth: 2)
             )
 
             // Name and type badge
@@ -74,6 +81,103 @@ struct GridItemView: View {
         .padding(8)
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
         .cornerRadius(8)
+        // Drag & Drop support
+        .draggable(item.path) {
+            // Preview during drag
+            VStack(spacing: 6) {
+                item.icon
+                    .font(.system(size: 24))
+                Text(item.name)
+                    .font(.caption)
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+        }
+        .dropDestination(for: URL.self) { droppedURLs, _ in
+            handleDrop(droppedURLs: droppedURLs)
+        } isTargeted: { isTargeted in
+            isDropTarget = isTargeted
+        }
+        .contextMenu {
+            itemContextMenu
+        }
+        .sheet(isPresented: $showingFileCreationSheet) {
+            if let folder = folder {
+                FileCreationSheet(
+                    isPresented: $showingFileCreationSheet,
+                    folderName: folder.name
+                ) { fileType in
+                    appState.createNewFile(in: folder, fileType: fileType)
+                }
+            }
+        }
+    }
+
+    private var borderColor: Color {
+        if isDropTarget && item.isFolder {
+            return Color.accentColor
+        } else if isSelected {
+            return Color.accentColor
+        }
+        return Color.clear
+    }
+
+    // MARK: - Drag & Drop
+
+    private func handleDrop(droppedURLs: [URL]) -> Bool {
+        guard let folder = folder else { return false }
+
+        for url in droppedURLs {
+            appState.moveFile(from: url, to: folder)
+        }
+        return true
+    }
+
+    // MARK: - Context Menu
+
+    @ViewBuilder
+    private var itemContextMenu: some View {
+        if let folder = folder {
+            // Folder context menu
+            Button(action: { showingFileCreationSheet = true }) {
+                Label("New Markdown File", systemImage: "doc.badge.plus")
+            }
+
+            Button(action: { appState.createNewFile(in: folder, fileType: .plainText) }) {
+                Label("New Text File", systemImage: "doc.text.badge.plus")
+            }
+
+            Divider()
+
+            Button(action: { appState.revealInFinder(item) }) {
+                Label("Reveal in Finder", systemImage: "finder")
+            }
+        } else {
+            // File context menu
+            Button(action: { appState.openInTab(item) }) {
+                Label("Open", systemImage: "doc")
+            }
+
+            // AI rename for text files
+            if let doc = item as? Document, (doc.type == .markdown || doc.type == .text) {
+                Button(action: { appState.renameWithAI(item) }) {
+                    Label("Rename with AI", systemImage: "sparkles")
+                }
+            }
+
+            Divider()
+
+            Button(action: { appState.revealInFinder(item) }) {
+                Label("Reveal in Finder", systemImage: "finder")
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: { appState.deleteItem(item) }) {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
 
     // MARK: - Thumbnail Background
@@ -197,29 +301,22 @@ struct GridItemView: View {
 
     @ViewBuilder
     private func typeBadge(for type: DocumentType) -> some View {
-        let badgeText: String
-        let badgeColor: Color
-
-        switch type {
-        case .markdown:
-            badgeText = "MD"
-            badgeColor = .blue
-        case .pdf:
-            badgeText = "PDF"
-            badgeColor = .red
-        case .image:
-            badgeText = "IMG"
-            badgeColor = .purple
-        case .code(let language):
-            badgeText = language.uppercased()
-            badgeColor = .green
-        case .text:
-            badgeText = "TXT"
-            badgeColor = .gray
-        default:
-            badgeText = "FILE"
-            badgeColor = .gray
-        }
+        let (badgeText, badgeColor): (String, Color) = {
+            switch type {
+            case .markdown:
+                return ("MD", .blue)
+            case .pdf:
+                return ("PDF", .red)
+            case .image:
+                return ("IMG", .purple)
+            case .code(let language):
+                return (language.uppercased(), .green)
+            case .text:
+                return ("TXT", .gray)
+            default:
+                return ("FILE", .gray)
+            }
+        }()
 
         Text(badgeText)
             .font(.system(size: 8, weight: .semibold))
@@ -235,6 +332,8 @@ struct GridItemView: View {
     GridView(folder: Folder(
         name: "Test",
         path: URL(fileURLWithPath: "/test"),
+        created: Date(),
+        modified: Date(),
         children: []
     ))
     .environment(AppState())

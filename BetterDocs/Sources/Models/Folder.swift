@@ -109,6 +109,57 @@ class Folder: FileSystemItem {
 
         return documents
     }
+
+    // MARK: - File Management Helpers
+
+    /// Check if a file with the given name exists in this folder
+    func containsFile(named fileName: String) -> Bool {
+        return children.contains { $0.name == fileName }
+    }
+
+    /// Get a unique filename by appending a number if needed
+    func uniqueFilename(for baseName: String, withExtension ext: String) -> String {
+        var filename = "\(baseName)\(ext)"
+        var counter = 1
+
+        while containsFile(named: filename) {
+            filename = "\(baseName) \(counter)\(ext)"
+            counter += 1
+        }
+
+        return filename
+    }
+
+    /// Find the parent folder of an item
+    func findParentFolder(of item: any FileSystemItem) -> Folder? {
+        for child in children {
+            if child.id == item.id {
+                return self
+            }
+
+            if let subfolder = child as? Folder,
+               let parent = subfolder.findParentFolder(of: item) {
+                return parent
+            }
+        }
+
+        return nil
+    }
+
+    /// Move an item from this folder to another folder
+    func moveChild(_ childID: UUID, to targetFolder: Folder) {
+        guard let child = children.first(where: { $0.id == childID }) else { return }
+
+        // Remove from this folder
+        removeChild(withID: childID)
+
+        // Add to target folder
+        targetFolder.addChild(child)
+
+        // Re-sort both folders
+        sortAlphabetically()
+        targetFolder.sortAlphabetically()
+    }
 }
 
 // Hashable conformance for Folder

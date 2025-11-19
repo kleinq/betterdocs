@@ -7,7 +7,7 @@ struct BetterDocsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
-        print("✅ BetterDocs app initializing...")
+        logInfo("✅ BetterDocs app initializing...")
     }
 
     var body: some Scene {
@@ -16,7 +16,7 @@ struct BetterDocsApp: App {
                 .environment(appState)
                 .frame(minWidth: 600, minHeight: 400)
                 .onAppear {
-                    print("✅ Window appeared!")
+                    logInfo("✅ Window appeared!")
                     // Wire appState to the delegate
                     appDelegate.appState = appState
                 }
@@ -113,6 +113,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Handle Cmd+W to close tabs instead of windows
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Set app icon
+        if let iconPath = Bundle.main.path(forResource: "AppIcon", ofType: "icns"),
+           let icon = NSImage(contentsOfFile: iconPath) {
+            NSApplication.shared.applicationIconImage = icon
+        }
+
         // Set ourselves as the window delegate
         if let window = NSApplication.shared.windows.first {
             mainWindow = window

@@ -14,47 +14,56 @@ struct PreviewView: View {
     @State private var annotationDialogData: AnnotationDialogData?
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Tab bar (if any tabs are open - preview or pinned)
-            if appState.previewTab != nil || !appState.openTabs.isEmpty {
-                TabBarView()
-                Divider()
-            }
+        ZStack(alignment: .topTrailing) {
+            // Main preview content
+            VStack(spacing: 0) {
+                // Tab bar (if any tabs are open - preview or pinned)
+                if appState.previewTab != nil || !appState.openTabs.isEmpty {
+                    TabBarView()
+                    Divider()
+                }
 
-            if let item = appState.selectedItem {
-                // Header with file info
-                PreviewHeaderView(item: item)
+                if let item = appState.selectedItem {
+                    // Header with file info
+                    PreviewHeaderView(item: item)
 
-                Divider()
+                    Divider()
 
-                // Content preview
-                if let document = item as? Document {
-                    DocumentPreviewView(document: document)
-                } else if let folder = item as? Folder {
-                    ScrollView {
-                        FolderPreviewView(folder: folder)
-                            .padding()
+                    // Content preview
+                    if let document = item as? Document {
+                        DocumentPreviewView(document: document)
+                    } else if let folder = item as? Folder {
+                        ScrollView {
+                            FolderPreviewView(folder: folder)
+                                .padding()
+                        }
                     }
-                }
-            } else {
-                // Empty state
-                VStack(spacing: 16) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 64))
-                        .foregroundColor(.secondary.opacity(0.5))
+                } else {
+                    // Empty state
+                    VStack(spacing: 16) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 64))
+                            .foregroundColor(.secondary.opacity(0.5))
 
-                    Text("Select a file to preview")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
+                        Text("Select a file to preview")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
 
-                    Text("Choose a file from the navigation sidebar")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        Text("Choose a file from the navigation sidebar")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .background(Color(NSColor.textBackgroundColor))
+
+            // Floating document outline overlay (top-right corner)
+            FloatingDocumentOutlineView()
+                .padding(.top, 16)
+                .padding(.trailing, 16)
+                .zIndex(100)
         }
-        .background(Color(NSColor.textBackgroundColor))
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowAnnotationDialog"))) { notification in
             print("📢 Received ShowAnnotationDialog notification")
             if let userInfo = notification.userInfo,
@@ -181,6 +190,7 @@ struct TabItemView: View {
 
 struct PreviewHeaderView: View {
     let item: any FileSystemItem
+    @Environment(AppState.self) private var appState
 
     var document: Document? {
         item as? Document
@@ -188,6 +198,13 @@ struct PreviewHeaderView: View {
 
     var folder: Folder? {
         item as? Folder
+    }
+
+    var canEdit: Bool {
+        if let doc = document {
+            return doc.type == .markdown || doc.type == .text || doc.type == .code(language: "")
+        }
+        return false
     }
 
     var body: some View {
@@ -219,6 +236,14 @@ struct PreviewHeaderView: View {
 
             // Action buttons
             HStack(spacing: 8) {
+                // Edit/Preview toggle for text-based files
+                if canEdit {
+                    Button(action: { appState.toggleEditMode() }) {
+                        Image(systemName: appState.isEditMode ? "book" : "pencil")
+                    }
+                    .help(appState.isEditMode ? "Preview" : "Edit")
+                }
+
                 Button(action: { openInFinder() }) {
                     Image(systemName: "folder")
                 }
@@ -251,27 +276,38 @@ struct PreviewHeaderView: View {
 
 struct DocumentPreviewView: View {
     let document: Document
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         let _ = print("🖼️ Previewing document: \(document.name) of type: \(document.type.displayName)")
 
         return Group {
-            switch document.type {
-            case .markdown:
-                MarkdownPreview(document: document)
-            case .text, .code:
-                TextPreview(document: document)
-            case .pdf:
-                PDFPreview(document: document)
-            case .image:
-                ImagePreview(document: document)
-            case .csv:
-                CSVPreview(document: document)
-            default:
-                GenericPreview(document: document)
+            // Show editor for text-based files in edit mode
+            if appState.isEditMode && canEdit {
+                TextEditorView(document: document)
+            } else {
+                // Show preview
+                switch document.type {
+                case .markdown:
+                    MarkdownPreview(document: document)
+                case .text, .code:
+                    TextPreview(document: document)
+                case .pdf:
+                    PDFPreview(document: document)
+                case .image:
+                    ImagePreview(document: document)
+                case .csv:
+                    CSVPreview(document: document)
+                default:
+                    GenericPreview(document: document)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    var canEdit: Bool {
+        return document.type == .markdown || document.type == .text || document.type == .code(language: "")
     }
 }
 

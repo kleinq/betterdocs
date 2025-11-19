@@ -174,7 +174,7 @@ struct CommandPaletteView: View {
                 icon: "sidebar.right",
                 title: "Toggle Document Outline",
                 subtitle: "Show or hide outline",
-                shortcut: "⌘/",
+                shortcut: "⌘⇧L",
                 isSelected: selectedIndex == baseIndex + 2
             )
             .id(baseIndex + 2)
@@ -184,26 +184,13 @@ struct CommandPaletteView: View {
             }
 
             CommandPaletteRow(
-                icon: "brain",
-                title: "Open Chat",
-                subtitle: "Chat with Claude",
-                shortcut: "/",
-                isSelected: selectedIndex == baseIndex + 3
-            )
-            .id(baseIndex + 3)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                openChat()
-            }
-
-            CommandPaletteRow(
                 icon: "folder",
                 title: "Open Folder",
                 subtitle: "Select a new folder to browse",
                 shortcut: "⌘O",
-                isSelected: selectedIndex == baseIndex + 4
+                isSelected: selectedIndex == baseIndex + 3
             )
-            .id(baseIndex + 4)
+            .id(baseIndex + 3)
             .contentShape(Rectangle())
             .onTapGesture {
                 openFolder()
@@ -223,10 +210,10 @@ struct CommandPaletteView: View {
 
     private var searchResultsSection: some View {
         Group {
-            let allItems = collectAllItems()
-            let fuzzyResults = FuzzySearch.search(searchQuery, in: allItems, keyPath: \.name)
+            // Use SearchService for full-text search instead of just fuzzy filename matching
+            let searchResults = appState.searchService.search(searchQuery, in: appState.rootFolder, filter: .default)
 
-            if fuzzyResults.isEmpty {
+            if searchResults.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 48))
@@ -243,19 +230,19 @@ struct CommandPaletteView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
             } else {
-                ForEach(Array(fuzzyResults.prefix(20).enumerated()), id: \.element.item.id) { index, result in
-                    let item = result.item
+                ForEach(Array(searchResults.prefix(20).enumerated()), id: \.element.id) { index, result in
+                    let matchContext = result.matches.first?.preview ?? result.item.path.path
                     CommandPaletteRow(
-                        icon: iconForItem(item),
-                        title: item.name,
-                        subtitle: item.path.path,
+                        icon: iconForItem(result.item),
+                        title: result.item.name,
+                        subtitle: matchContext,
                         shortcut: nil,
                         isSelected: selectedIndex == index
                     )
                     .id(index)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        selectItem(item)
+                        selectItem(result.item)
                     }
                 }
             }
@@ -269,10 +256,17 @@ struct CommandPaletteView: View {
         var items: [any FileSystemItem] = []
 
         func traverse(_ folder: Folder) {
-            items.append(contentsOf: folder.children)
+            // Add the folder itself to the searchable items
+            items.append(folder)
+
+            // Add all children
             for child in folder.children {
                 if let subfolder = child as? Folder {
+                    // Recursively traverse subfolders
                     traverse(subfolder)
+                } else {
+                    // Add files directly
+                    items.append(child)
                 }
             }
         }
@@ -302,9 +296,15 @@ struct CommandPaletteView: View {
     }
 
     private func moveSelection(down: Bool) {
-        let maxIndex = searchQuery.isEmpty ?
-            appState.openTabs.count + 4 : // Recent files + 5 actions
-            min(collectAllItems().count - 1, 19) // Max 20 search results
+        let maxIndex: Int
+        if searchQuery.isEmpty {
+            // Recent files + 4 actions
+            maxIndex = appState.openTabs.count + 3
+        } else {
+            // Calculate based on actual search results
+            let fuzzyResults = FuzzySearch.search(searchQuery, in: collectAllItems(), keyPath: \.name)
+            maxIndex = min(fuzzyResults.count - 1, 19) // Max 20 search results
+        }
 
         if down {
             selectedIndex = min(selectedIndex + 1, maxIndex)
@@ -324,8 +324,7 @@ struct CommandPaletteView: View {
                 case 0: openSettings()
                 case 1: refreshFolder()
                 case 2: toggleOutline()
-                case 3: openChat()
-                case 4: openFolder()
+                case 3: openFolder()
                 default: break
                 }
             }
@@ -372,11 +371,6 @@ struct CommandPaletteView: View {
 
     private func toggleOutline() {
         appState.toggleOutline()
-        closePanel()
-    }
-
-    private func openChat() {
-        appState.isChatOpen = true
         closePanel()
     }
 

@@ -57,6 +57,7 @@ struct NavigationView: View {
                 Group {
                     if appState.viewMode == .grid {
                         GridView(folder: rootFolder)
+                            .id("grid-\(rootFolder.path.path)") // Stable ID based on path, not UUID
                     } else {
                         ScrollViewReader { proxy in
                             ScrollView {
@@ -79,6 +80,7 @@ struct NavigationView: View {
                                 }
                             }
                         }
+                        .id("tree-\(rootFolder.path.path)") // Stable ID based on path, not UUID
                     }
                 }
                 .focusable()
@@ -107,8 +109,17 @@ struct NavigationView: View {
             isFocused = true
 
             // Restore expanded folders from UserDefaults (if rootFolder already loaded)
-            if appState.rootFolder != nil {
+            if let rootFolder = appState.rootFolder {
+                logInfo("🔄 NavigationView appeared with rootFolder loaded")
                 restoreExpandedFolders()
+                logInfo("✅ Restored \(expandedFolders.count) expanded folders on appear")
+
+                // If there's a selected item from app state, sync it
+                if let selectedItem = appState.selectedItem {
+                    logInfo("🎯 Syncing selected item: \(selectedItem.name)")
+                    selectedID = selectedItem.id
+                    expandPathToItem(selectedItem.id, in: rootFolder)
+                }
             }
 
             // Set up local event monitor for arrow keys
@@ -132,28 +143,40 @@ struct NavigationView: View {
                 expandPathToItem(id, in: folder)
             }
         }
-        .onChange(of: appState.selectedItem?.id) { _, newValue in
+        .onChange(of: appState.selectedItem?.id) { oldValue, newValue in
             // Sync selectedID when selectedItem changes (e.g., from search result or app launch)
-            if let id = newValue {
+            if let id = newValue, let selectedItem = appState.selectedItem {
+                logInfo("📍 App selected item changed to: \(selectedItem.name)")
                 selectedID = id
                 // Also expand to show this item
                 if let folder = appState.rootFolder {
+                    logInfo("🌳 Expanding path to show selected item")
                     expandPathToItem(id, in: folder)
                 }
+            } else if newValue == nil && oldValue != nil {
+                // Selection was cleared
+                logInfo("❌ Selection cleared")
+                selectedID = nil
             }
         }
         .onChange(of: appState.rootFolder?.id) { oldValue, newValue in
             // Folder was loaded or reloaded (e.g., on app launch or by file watcher)
             if newValue != nil {
-                restoreExpandedFolders()
-                // Ensure currently selected item is visible
-                if let selectedID = selectedID, let folder = appState.rootFolder {
-                    expandPathToItem(selectedID, in: folder)
-                } else if oldValue == nil, let selectedItem = appState.selectedItem {
-                    // On initial load, expand to selected item from app state
-                    selectedID = selectedItem.id
-                    if let folder = appState.rootFolder {
-                        expandPathToItem(selectedItem.id, in: folder)
+                logInfo("📂 Folder reloaded, restoring expanded state...")
+                // Small delay to ensure the view is ready
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    restoreExpandedFolders()
+                    logInfo("✅ Restored \(expandedFolders.count) expanded folders")
+
+                    // Ensure currently selected item is visible
+                    if let selectedID = selectedID, let folder = appState.rootFolder {
+                        expandPathToItem(selectedID, in: folder)
+                    } else if oldValue == nil, let selectedItem = appState.selectedItem {
+                        // On initial load, expand to selected item from app state
+                        selectedID = selectedItem.id
+                        if let folder = appState.rootFolder {
+                            expandPathToItem(selectedItem.id, in: folder)
+                        }
                     }
                 }
             }
@@ -229,9 +252,13 @@ struct NavigationView: View {
     private func expandPathToItem(_ itemID: UUID, in folder: Folder) {
         // Find path to item and expand all parent folders
         if let path = findPath(to: itemID, in: folder, currentPath: []) {
+            logInfo("🔍 Found path with \(path.count) parent folders to expand")
             for folderID in path {
                 expandedFolders.insert(folderID)
             }
+            logInfo("✅ Expanded folders, total now: \(expandedFolders.count)")
+        } else {
+            logWarning("⚠️ Could not find path to item")
         }
     }
 
@@ -410,22 +437,35 @@ struct NavigationView: View {
     }
 
     private func restoreExpandedFolders() {
-        guard let rootFolder = appState.rootFolder else { return }
+        guard let rootFolder = appState.rootFolder else {
+            logWarning("⚠️ Cannot restore: no rootFolder")
+            return
+        }
+
+        // Always expand the root folder
+        var restoredFolders: Set<UUID> = [rootFolder.id]
+        logInfo("📂 Auto-expanding root folder: \(rootFolder.name)")
 
         // Load persisted paths
         if let savedPaths = UserDefaults.standard.array(forKey: "expandedFolderPaths") as? [String] {
+            logInfo("📦 Found \(savedPaths.count) saved folder paths")
             expandedFolderPaths = Set(savedPaths)
+        } else {
+            logInfo("📦 No saved folder paths found")
         }
 
         // Convert paths back to UUIDs for current folder tree
-        var restoredFolders: Set<UUID> = []
         for path in expandedFolderPaths {
             if let item = findItemByPath(path, in: rootFolder), item.isFolder {
                 restoredFolders.insert(item.id)
+                logInfo("✅ Restored folder: \(item.name)")
+            } else {
+                logWarning("⚠️ Could not find folder at path: \(path)")
             }
         }
 
         expandedFolders = restoredFolders
+        logInfo("🎯 Total restored folders: \(restoredFolders.count)")
     }
 
     private func findItemByPath(_ path: String, in folder: Folder) -> (any FileSystemItem)? {
@@ -457,6 +497,9 @@ struct FileTreeItemView: View {
     @Binding var expandedFolders: Set<UUID>
 
     @State private var isHovered: Bool = false
+    @State private var isDropTarget: Bool = false
+    @State private var showingRenameSheet: Bool = false
+    @State private var showingFileCreationSheet: Bool = false
     @Environment(AppState.self) private var appState
 
     var folder: Folder? {
@@ -536,6 +579,36 @@ struct FileTreeItemView: View {
             .onHover { hovering in
                 isHovered = hovering
             }
+            // Drag & Drop support
+            .draggable(item.path) {
+                // Preview during drag
+                HStack(spacing: 6) {
+                    item.icon
+                    Text(item.name)
+                        .lineLimit(1)
+                }
+                .padding(8)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
+            }
+            .dropDestination(for: URL.self) { droppedURLs, _ in
+                handleDrop(droppedURLs: droppedURLs)
+            } isTargeted: { isTargeted in
+                isDropTarget = isTargeted
+            }
+            .contextMenu {
+                itemContextMenu
+            }
+            .sheet(isPresented: $showingFileCreationSheet) {
+                if let folder = folder {
+                    FileCreationSheet(
+                        isPresented: $showingFileCreationSheet,
+                        folderName: folder.name
+                    ) { fileType in
+                        appState.createNewFile(in: folder, fileType: fileType)
+                    }
+                }
+            }
 
             // Children (if folder is expanded)
             if isExpanded, let folder = folder {
@@ -553,7 +626,9 @@ struct FileTreeItemView: View {
     }
 
     private var backgroundColors: Color {
-        if selectedID == item.id {
+        if isDropTarget && item.isFolder {
+            return Color.accentColor.opacity(0.2)
+        } else if selectedID == item.id {
             return Color.accentColor.opacity(0.3)
         } else if isHovered {
             return Color.secondary.opacity(0.1)
@@ -567,6 +642,73 @@ struct FileTreeItemView: View {
                 expandedFolders.remove(item.id)
             } else {
                 expandedFolders.insert(item.id)
+            }
+        }
+    }
+
+    // MARK: - Drag & Drop
+
+    private func handleDrop(droppedURLs: [URL]) -> Bool {
+        guard let folder = folder else { return false }
+
+        for url in droppedURLs {
+            appState.moveFile(from: url, to: folder)
+        }
+        return true
+    }
+
+    // MARK: - Context Menu
+
+    @ViewBuilder
+    private var itemContextMenu: some View {
+        if let folder = folder {
+            // Folder context menu
+            Button(action: { showingFileCreationSheet = true }) {
+                Label("New Markdown File", systemImage: "doc.badge.plus")
+            }
+
+            Button(action: { appState.createNewFile(in: folder, fileType: .plainText) }) {
+                Label("New Text File", systemImage: "doc.text.badge.plus")
+            }
+
+            Divider()
+
+            Button(action: { showingRenameSheet = true }) {
+                Label("Rename", systemImage: "pencil")
+            }
+
+            Divider()
+
+            Button(action: { appState.revealInFinder(item) }) {
+                Label("Reveal in Finder", systemImage: "finder")
+            }
+        } else {
+            // File context menu
+            Button(action: { appState.openInTab(item) }) {
+                Label("Open", systemImage: "doc")
+            }
+
+            Button(action: { showingRenameSheet = true }) {
+                Label("Rename", systemImage: "pencil")
+            }
+
+            // AI rename for text files
+            if let doc = document, (doc.type == .markdown || doc.type == .text) {
+                Button(action: { appState.renameWithAI(item) }) {
+                    Label("Rename with AI", systemImage: "sparkles")
+                }
+            }
+
+            Divider()
+
+            Button(action: { appState.revealInFinder(item) }) {
+                Label("Reveal in Finder", systemImage: "finder")
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: { appState.deleteItem(item) }) {
+                Label("Delete", systemImage: "trash")
             }
         }
     }

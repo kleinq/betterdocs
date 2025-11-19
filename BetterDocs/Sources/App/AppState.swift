@@ -23,6 +23,7 @@ class AppState {
     var isChatPopupOpen: Bool = false
     var isHelpOpen: Bool = false
     var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "list") ?? .list
+    var isEditMode: Bool = false // Toggle between preview and edit mode
 
     // Annotations
     var annotations: [Annotation] = []
@@ -37,6 +38,7 @@ class AppState {
     let searchService = SearchService()
     let claudeService = ClaudeService()
     let fileWatcher = FileSystemWatcher()
+    let fileManagementService = FileManagementService()
 
     init() {
         // Restore last opened folder on launch
@@ -63,10 +65,12 @@ class AppState {
                     if let tabPaths = UserDefaults.standard.array(forKey: "openTabPaths") as? [String],
                        !tabPaths.isEmpty,
                        let rootFolder = self.rootFolder {
+                        logInfo("📂 Restoring \(tabPaths.count) open tabs...")
                         let activeTabPath = UserDefaults.standard.string(forKey: "activeTabPath")
 
                         for tabPath in tabPaths {
                             if let item = findItem(byPath: tabPath, in: rootFolder) {
+                                logInfo("✅ Restored tab: \(item.name)")
                                 self.openInTab(item)
                             }
                         }
@@ -74,19 +78,26 @@ class AppState {
                         // Restore active tab
                         if let activeTabPath = activeTabPath,
                            let activeItem = findItem(byPath: activeTabPath, in: rootFolder) {
+                            logInfo("🎯 Restoring active tab: \(activeItem.name)")
                             if let tab = openTabs.first(where: { $0.itemPath == activeTabPath }) {
                                 self.switchToTab(tab.id)
                             }
                         }
                     } else {
+                        logInfo("📂 No tabs saved, restoring selected item...")
                         // Restore last selected item if no tabs were saved
                         if let lastSelectedPath = UserDefaults.standard.string(forKey: "lastSelectedItemPath"),
                            !lastSelectedPath.isEmpty,
                            let rootFolder = self.rootFolder {
                             // Find the item by path
                             if let item = findItem(byPath: lastSelectedPath, in: rootFolder) {
+                                logInfo("🎯 Restoring selected item: \(item.name)")
                                 self.selectItem(item)
+                            } else {
+                                logWarning("⚠️ Could not find last selected item at: \(lastSelectedPath)")
                             }
+                        } else {
+                            logInfo("📂 No last selected item found")
                         }
                     }
                 }
@@ -142,6 +153,15 @@ class AppState {
         return nil
     }
 
+    /// Get FileSystemItems from an array of file paths
+    func getItems(fromPaths paths: [String]) -> [any FileSystemItem] {
+        guard let rootFolder = rootFolder else { return [] }
+
+        return paths.compactMap { path in
+            findItem(byPath: path, in: rootFolder)
+        }
+    }
+
     func toggleOutline() {
         isOutlineVisible.toggle()
         UserDefaults.standard.set(isOutlineVisible, forKey: "isOutlineVisible")
@@ -155,6 +175,10 @@ class AppState {
     func setViewMode(_ mode: ViewMode) {
         viewMode = mode
         UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode")
+    }
+
+    func toggleEditMode() {
+        isEditMode.toggle()
     }
 
     // MARK: - Annotation Management
@@ -716,6 +740,177 @@ class AppState {
             return String(name[..<index]) + "..."
         }
         return name
+    }
+
+    // MARK: - File Management Operations
+
+    /// Create a new file in the specified folder
+    func createNewFile(in folder: Folder, fileType: FileType) {
+        Task {
+            do {
+                // Create temporary file with minimal placeholder content
+                let initialContent = "" // Start with empty content
+                let timestamp = Date().timeIntervalSince1970
+                let tempName = "untitled-\(Int(timestamp))" // Simple timestamp-based name
+
+                let fileURL = try fileManagementService.createTextFile(
+                    at: folder.path,
+                    name: tempName,
+                    fileType: fileType,
+                    initialContent: initialContent
+                )
+
+                logInfo("✅ Created file: \(fileURL.lastPathComponent)")
+
+                // Refresh the folder to show the new file
+                await refreshFolder()
+
+                // Auto-select and open the new file in EDIT mode
+                if let rootFolder = self.rootFolder,
+                   let newFile = findItem(byPath: fileURL.path, in: rootFolder) {
+                    selectItem(newFile)
+                    openInTab(newFile)
+                    // Switch to edit mode so user can start typing
+                    isEditMode = true
+                }
+            } catch {
+                logError("❌ Failed to create file: \(error)")
+            }
+        }
+    }
+
+    /// Move a file from source URL to destination folder
+    func moveFile(from sourceURL: URL, to destinationFolder: Folder) {
+        Task {
+            do {
+                let destinationURL = try fileManagementService.moveFile(
+                    from: sourceURL,
+                    to: destinationFolder.path
+                )
+
+                logInfo("✅ Moved file to: \(destinationURL.path)")
+
+                // Delay refresh slightly to allow file system to settle
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+
+                // Refresh the folder tree
+                await refreshFolder()
+
+                // Small delay before trying to select, to allow view to update
+                try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+
+                // Auto-select the moved file
+                if let rootFolder = self.rootFolder,
+                   let movedFile = findItem(byPath: destinationURL.path, in: rootFolder) {
+                    selectItem(movedFile)
+                }
+            } catch {
+                logError("❌ Failed to move file: \(error)")
+            }
+        }
+    }
+
+    /// Rename a file or folder
+    func renameItem(_ item: any FileSystemItem, newName: String) {
+        Task {
+            do {
+                let renamedURL = try fileManagementService.renameItem(
+                    at: item.path,
+                    newName: newName,
+                    preserveExtension: true
+                )
+
+                logInfo("✅ Renamed to: \(renamedURL.lastPathComponent)")
+
+                // Refresh the folder tree
+                await refreshFolder()
+
+                // Re-select the renamed item
+                if let rootFolder = self.rootFolder,
+                   let renamedItem = findItem(byPath: renamedURL.path, in: rootFolder) {
+                    selectItem(renamedItem)
+                }
+            } catch {
+                logError("❌ Failed to rename: \(error)")
+            }
+        }
+    }
+
+    /// Rename a file using AI based on its content
+    func renameWithAI(_ item: any FileSystemItem) {
+        Task {
+            do {
+                // Load file content
+                guard let content = try? String(contentsOf: item.path, encoding: .utf8),
+                      !content.isEmpty else {
+                    logWarning("⚠️ Cannot rename: file is empty")
+                    return
+                }
+
+                logInfo("🤖 Generating AI filename...")
+
+                // Generate AI filename
+                let fileExtension = item.path.pathExtension
+                let aiFilename = try await claudeService.generateFilename(
+                    content: content,
+                    fileType: ".\(fileExtension)"
+                )
+
+                // Rename the file
+                let renamedURL = try fileManagementService.renameItem(
+                    at: item.path,
+                    newName: aiFilename,
+                    preserveExtension: true
+                )
+
+                logInfo("✅ AI renamed to: \(renamedURL.lastPathComponent)")
+
+                // Refresh the folder tree
+                await refreshFolder()
+
+                // Re-select the renamed item
+                if let rootFolder = self.rootFolder,
+                   let renamedItem = findItem(byPath: renamedURL.path, in: rootFolder) {
+                    selectItem(renamedItem)
+                }
+            } catch {
+                logError("❌ Failed to AI rename: \(error)")
+            }
+        }
+    }
+
+    /// Delete a file or folder
+    func deleteItem(_ item: any FileSystemItem) {
+        Task {
+            do {
+                try fileManagementService.deleteItem(at: item.path)
+
+                logInfo("✅ Deleted: \(item.name)")
+
+                // Clear selection if deleted item was selected
+                if selectedItem?.id == item.id {
+                    selectedItem = nil
+                }
+
+                // Refresh the folder tree
+                await refreshFolder()
+            } catch {
+                logError("❌ Failed to delete: \(error)")
+            }
+        }
+    }
+
+    /// Reveal item in Finder
+    func revealInFinder(_ item: any FileSystemItem) {
+        NSWorkspace.shared.activateFileViewerSelecting([item.path])
+    }
+
+    /// Refresh the current folder
+    func refreshFolder() async {
+        guard let rootFolder = rootFolder else { return }
+
+        // Reload the folder
+        await loadFolder(at: rootFolder.path)
     }
 }
 

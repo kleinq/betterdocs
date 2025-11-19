@@ -26,6 +26,11 @@ struct MarkdownWebView: NSViewRepresentable {
         let html = generateHTML(from: markdown, scrollPosition: savedPosition)
         webView.loadHTMLString(html, baseURL: nil)
 
+        // Make the webView accept first responder status for keyboard events
+        DispatchQueue.main.async {
+            webView.window?.makeFirstResponder(webView)
+        }
+
         return webView
     }
 
@@ -377,30 +382,39 @@ struct MarkdownWebView: NSViewRepresentable {
                 table {
                     border-collapse: collapse;
                     margin: 12px 0;
+                    width: 100%;
                 }
                 th, td {
-                    border: 1px solid \(isDark ? "#444444" : "#dddddd");
-                    padding: 8px 12px;
+                    border: 1px solid \(isDark ? "#555555" : "#dddddd");
+                    padding: 10px 14px;
                     text-align: left;
+                    vertical-align: top;
                 }
                 th {
-                    background-color: \(isDark ? "#2d2d2d" : "#f5f5f5");
+                    background-color: \(isDark ? "#333333" : "#f5f5f5");
                     font-weight: bold;
+                    color: \(isDark ? "#e0e0e0" : "#000000");
+                }
+                tr:hover {
+                    background-color: \(isDark ? "#2a2a2a" : "#f9f9f9");
                 }
             </style>
         </head>
         <body>
             <div id="content"></div>
             <script>
-                // Configure marked
+                // Configure marked with proper options
                 marked.setOptions({
                     breaks: true,
-                    gfm: true
+                    gfm: true,
+                    headerIds: true,
+                    mangle: false
                 });
 
                 // Parse and render markdown
                 const markdown = `\(escapedMarkdown)`;
-                document.getElementById('content').innerHTML = marked.parse(markdown);
+                const parsed = marked.parse(markdown);
+                document.getElementById('content').innerHTML = parsed;
 
                 // Add IDs to headings for navigation
                 let headingIndex = 0;
@@ -457,6 +471,327 @@ class CustomWebView: WKWebView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // Accept first responder to receive keyboard events
+    override var acceptsFirstResponder: Bool {
+        return true
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Handle Cmd+F for find
+        if event.modifierFlags.contains(.command) {
+            let key = event.charactersIgnoringModifiers ?? ""
+            if key == "f" {
+                print("🔍 Cmd+F pressed - showing find interface")
+                showFindInterface()
+                return true
+            } else if key == "g" {
+                // Cmd+G for find next
+                print("🔍 Cmd+G pressed - find next")
+                findNext()
+                return true
+            } else if key == "G" && event.modifierFlags.contains(.shift) {
+                // Cmd+Shift+G for find previous
+                print("🔍 Cmd+Shift+G pressed - find previous")
+                findPrevious()
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func showFindInterface() {
+        evaluateJavaScript("""
+            if (!window.findOverlay) {
+                // Create find overlay
+                const overlay = document.createElement('div');
+                overlay.id = 'findOverlay';
+                overlay.style.cssText = `
+                    position: fixed;
+                    top: 10px;
+                    right: 10px;
+                    background: rgba(30, 30, 30, 0.95);
+                    border: 1px solid #555;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    z-index: 10000;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                `;
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.placeholder = 'Find in page...';
+                input.style.cssText = `
+                    background: #1e1e1e;
+                    border: 1px solid #555;
+                    color: white;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    outline: none;
+                    width: 200px;
+                `;
+
+                const countSpan = document.createElement('span');
+                countSpan.style.cssText = 'color: #aaa; font-size: 12px; min-width: 50px;';
+
+                const prevBtn = document.createElement('button');
+                prevBtn.textContent = '▲';
+                prevBtn.style.cssText = `
+                    background: #333;
+                    border: 1px solid #555;
+                    color: white;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                `;
+
+                const nextBtn = document.createElement('button');
+                nextBtn.textContent = '▼';
+                nextBtn.style.cssText = prevBtn.style.cssText;
+
+                const closeBtn = document.createElement('button');
+                closeBtn.textContent = '✕';
+                closeBtn.style.cssText = prevBtn.style.cssText;
+
+                overlay.appendChild(input);
+                overlay.appendChild(countSpan);
+                overlay.appendChild(prevBtn);
+                overlay.appendChild(nextBtn);
+                overlay.appendChild(closeBtn);
+                document.body.appendChild(overlay);
+
+                window.findOverlay = overlay;
+                window.findInput = input;
+                window.findCount = countSpan;
+                window.currentMatches = [];
+                window.currentMatchIndex = -1;
+
+                function highlightMatches(text) {
+                    // Remove previous highlights
+                    document.querySelectorAll('.find-highlight').forEach(el => {
+                        const parent = el.parentNode;
+                        parent.replaceChild(document.createTextNode(el.textContent), el);
+                        parent.normalize();
+                    });
+
+                    window.currentMatches = [];
+                    window.currentMatchIndex = -1;
+
+                    if (!text) {
+                        countSpan.textContent = '';
+                        return;
+                    }
+
+                    const walker = document.createTreeWalker(
+                        document.getElementById('content'),
+                        NodeFilter.SHOW_TEXT,
+                        null
+                    );
+
+                    const textNodes = [];
+                    let node;
+                    while (node = walker.nextNode()) {
+                        textNodes.push(node);
+                    }
+
+                    const searchText = text.toLowerCase();
+                    textNodes.forEach(node => {
+                        const nodeText = node.textContent;
+                        const nodeLower = nodeText.toLowerCase();
+                        let lastIndex = 0;
+                        let index = nodeLower.indexOf(searchText, lastIndex);
+
+                        if (index === -1) return;
+
+                        const fragment = document.createDocumentFragment();
+                        while (index !== -1) {
+                            if (index > lastIndex) {
+                                fragment.appendChild(document.createTextNode(nodeText.substring(lastIndex, index)));
+                            }
+
+                            const highlight = document.createElement('span');
+                            highlight.className = 'find-highlight';
+                            highlight.style.cssText = 'background-color: yellow; color: black;';
+                            highlight.textContent = nodeText.substring(index, index + text.length);
+                            fragment.appendChild(highlight);
+                            window.currentMatches.push(highlight);
+
+                            lastIndex = index + text.length;
+                            index = nodeLower.indexOf(searchText, lastIndex);
+                        }
+
+                        if (lastIndex < nodeText.length) {
+                            fragment.appendChild(document.createTextNode(nodeText.substring(lastIndex)));
+                        }
+
+                        node.parentNode.replaceChild(fragment, node);
+                    });
+
+                    if (window.currentMatches.length > 0) {
+                        window.currentMatchIndex = 0;
+                        selectMatch(0);
+                    }
+
+                    countSpan.textContent = window.currentMatches.length > 0
+                        ? `1 of ${window.currentMatches.length}`
+                        : 'No matches';
+                }
+
+                function selectMatch(index) {
+                    if (window.currentMatches.length === 0) return;
+
+                    // Remove current selection highlight
+                    window.currentMatches.forEach(el => {
+                        el.style.backgroundColor = 'yellow';
+                    });
+
+                    // Highlight current match
+                    const match = window.currentMatches[index];
+                    match.style.backgroundColor = 'orange';
+                    match.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                    countSpan.textContent = `${index + 1} of ${window.currentMatches.length}`;
+                }
+
+                input.addEventListener('input', (e) => {
+                    highlightMatches(e.target.value);
+                });
+
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                            prevBtn.click();
+                        } else {
+                            nextBtn.click();
+                        }
+                    } else if (e.key === 'Escape') {
+                        closeBtn.click();
+                    }
+                });
+
+                prevBtn.addEventListener('click', () => {
+                    if (window.currentMatches.length === 0) return;
+                    window.currentMatchIndex = (window.currentMatchIndex - 1 + window.currentMatches.length) % window.currentMatches.length;
+                    selectMatch(window.currentMatchIndex);
+                });
+
+                nextBtn.addEventListener('click', () => {
+                    if (window.currentMatches.length === 0) return;
+                    window.currentMatchIndex = (window.currentMatchIndex + 1) % window.currentMatches.length;
+                    selectMatch(window.currentMatchIndex);
+                });
+
+                closeBtn.addEventListener('click', () => {
+                    document.querySelectorAll('.find-highlight').forEach(el => {
+                        const parent = el.parentNode;
+                        parent.replaceChild(document.createTextNode(el.textContent), el);
+                        parent.normalize();
+                    });
+                    overlay.remove();
+                    window.findOverlay = null;
+                    window.currentMatches = [];
+                });
+
+                window.findNext = function() {
+                    if (window.currentMatches.length === 0) return;
+                    window.currentMatchIndex = (window.currentMatchIndex + 1) % window.currentMatches.length;
+                    selectMatch(window.currentMatchIndex);
+                };
+
+                window.findPrevious = function() {
+                    if (window.currentMatches.length === 0) return;
+                    window.currentMatchIndex = (window.currentMatchIndex - 1 + window.currentMatches.length) % window.currentMatches.length;
+                    selectMatch(window.currentMatchIndex);
+                };
+            }
+
+            window.findOverlay.style.display = 'flex';
+            window.findInput.focus();
+            window.findInput.select();
+        """)
+    }
+
+    private func findNext() {
+        evaluateJavaScript("if (window.findNext) window.findNext();")
+    }
+
+    private func findPrevious() {
+        evaluateJavaScript("if (window.findPrevious) window.findPrevious();")
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // Handle keyboard navigation for page-by-page reading
+        let key = event.charactersIgnoringModifiers ?? ""
+        let keyCode = event.keyCode
+
+        print("🔑 WebView keyDown - keyCode: \(keyCode), char: '\(key)'")
+
+        // Key codes reference:
+        // Space: 49, Left: 123, Right: 124, Down: 125, Up: 126
+
+        // Space key or Right Arrow: Scroll down one page
+        if key == " " || keyCode == 49 || keyCode == 124 {
+            print("📄 Space/Right Arrow - scrolling down")
+            scrollByPage(direction: .down)
+            return
+        }
+
+        // Left Arrow: Scroll up one page (for symmetry with Right Arrow)
+        if keyCode == 123 {
+            print("📄 Left Arrow - scrolling up")
+            scrollByPage(direction: .up)
+            return
+        }
+
+        // Down Arrow (125) and Up Arrow (126) fall through to default behavior
+        // for incremental scrolling - this is intentional
+        super.keyDown(with: event)
+    }
+
+    private func scrollByPage(direction: ScrollDirection) {
+        // Get the viewport height and scroll by approximately one page
+        evaluateJavaScript("""
+            (function() {
+                const viewportHeight = window.innerHeight;
+                const currentScroll = window.pageYOffset;
+                const documentHeight = document.documentElement.scrollHeight;
+
+                // Calculate target scroll position
+                // Leave a small overlap (10% of viewport) for reading continuity
+                const scrollAmount = viewportHeight * 0.9;
+                let targetScroll;
+
+                if ('\(direction.rawValue)' === 'down') {
+                    targetScroll = Math.min(currentScroll + scrollAmount, documentHeight - viewportHeight);
+                } else {
+                    targetScroll = Math.max(currentScroll - scrollAmount, 0);
+                }
+
+                // Smooth scroll to target
+                window.scrollTo({
+                    top: targetScroll,
+                    behavior: 'smooth'
+                });
+
+                return targetScroll;
+            })();
+        """) { result, error in
+            if let error = error {
+                print("❌ Error scrolling by page: \(error)")
+            } else if let targetScroll = result as? Double {
+                print("📄 Scrolled \(direction.rawValue) to position: \(targetScroll)")
+            }
+        }
+    }
+
+    enum ScrollDirection: String {
+        case up = "up"
+        case down = "down"
     }
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {

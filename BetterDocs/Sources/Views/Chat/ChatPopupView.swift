@@ -342,13 +342,25 @@ struct ChatPopupView: View {
             }
         }
 
-        // Send to Claude with the currently selected document as context
+        // Collect all related files and folders from the chat as context
+        var contextItems: [any FileSystemItem] = []
+        if let currentChat = appState.currentChat {
+            // Get all related files
+            let fileItems = appState.getItems(fromPaths: currentChat.relatedFiles)
+            contextItems.append(contentsOf: fileItems)
+
+            // Get all related folders
+            let folderItems = appState.getItems(fromPaths: currentChat.relatedFolders)
+            contextItems.append(contentsOf: folderItems)
+        }
+
+        // Send to Claude with all related files and folders as context
         Task {
             do {
-                print("[CHAT] Sending to Claude...")
+                print("[CHAT] Sending to Claude with \(contextItems.count) context items...")
 
-                // Use streaming to capture tool usage
-                let stream = try await appState.claudeService.sendMessageStreamingWithAudit(query, context: appState.selectedItem) { toolUse in
+                // Use streaming to capture tool usage with multiple context items
+                let stream = try await appState.claudeService.sendMessageStreamingWithAudit(query, contextItems: contextItems) { toolUse in
                     // Called on MainActor when a tool is used
                     Task { @MainActor in
                         self.addAuditEntry(toolUse: toolUse)

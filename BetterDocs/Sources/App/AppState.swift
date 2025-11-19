@@ -39,6 +39,11 @@ class AppState {
     let claudeService = ClaudeService()
     let fileWatcher = FileSystemWatcher()
     let fileManagementService = FileManagementService()
+    let gitService = GitService()
+
+    // Git state
+    var gitStatus: GitStatus = .empty
+    var isPerformingGitOperation: Bool = false
 
     init() {
         // Restore last opened folder on launch
@@ -533,6 +538,9 @@ class AppState {
             // Index for search (simplified for now)
             await searchService.indexFolder(folder)
 
+            // Refresh git status
+            refreshGitStatus()
+
             // Start watching the folder for changes
             fileWatcher.watch(path: url) { [weak self] in
                 Task { @MainActor [weak self] in
@@ -911,6 +919,79 @@ class AppState {
 
         // Reload the folder
         await loadFolder(at: rootFolder.path)
+    }
+
+    // MARK: - Git Operations
+
+    /// Refresh git status for the current folder
+    func refreshGitStatus() {
+        guard let rootFolder = rootFolder else { return }
+
+        Task {
+            do {
+                gitStatus = try await gitService.getStatus(at: rootFolder.path)
+            } catch {
+                // Silently fail - just keep old status
+                gitStatus = .empty
+            }
+        }
+    }
+
+    /// Commit changes with a message
+    func performGitCommit(message: String) {
+        guard let rootFolder = rootFolder else { return }
+
+        Task {
+            isPerformingGitOperation = true
+            defer { isPerformingGitOperation = false }
+
+            do {
+                try await gitService.commit(message: message, at: rootFolder.path)
+                logInfo("✅ Git commit successful")
+                await refreshGitStatus()
+            } catch {
+                logError("❌ Git commit failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Push changes to remote
+    func performGitPush() {
+        guard let rootFolder = rootFolder else { return }
+
+        Task {
+            isPerformingGitOperation = true
+            defer { isPerformingGitOperation = false }
+
+            do {
+                logInfo("🔄 Pushing to remote...")
+                try await gitService.push(at: rootFolder.path)
+                logInfo("✅ Git push successful")
+                await refreshGitStatus()
+            } catch {
+                logError("❌ Git push failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Pull changes from remote
+    func performGitPull() {
+        guard let rootFolder = rootFolder else { return }
+
+        Task {
+            isPerformingGitOperation = true
+            defer { isPerformingGitOperation = false }
+
+            do {
+                logInfo("🔄 Pulling from remote...")
+                try await gitService.pull(at: rootFolder.path)
+                logInfo("✅ Git pull successful")
+                await refreshFolder() // Refresh folder to show updated files
+                await refreshGitStatus()
+            } catch {
+                logError("❌ Git pull failed: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

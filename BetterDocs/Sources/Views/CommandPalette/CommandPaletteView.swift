@@ -5,6 +5,7 @@ struct CommandPaletteView: View {
     @Binding var isOpen: Bool
     @State private var searchQuery: String = ""
     @State private var selectedIndex: Int = 0
+    @State private var showGitCommitDialog: Bool = false
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
@@ -55,6 +56,8 @@ struct CommandPaletteView: View {
                                     recentFilesSection
                                     Divider()
                                     actionsSection
+                                    Divider()
+                                    gitOperationsSection
                                 } else {
                                     // Show search results
                                     searchResultsSection
@@ -102,6 +105,10 @@ struct CommandPaletteView: View {
         .onKeyPress(.escape) {
             closePanel()
             return .handled
+        }
+        .sheet(isPresented: $showGitCommitDialog) {
+            GitCommitDialog()
+                .environment(appState)
         }
     }
 
@@ -206,6 +213,81 @@ struct CommandPaletteView: View {
         }
     }
 
+    // MARK: - Git Operations Section
+
+    private var gitOperationsSection: some View {
+        Group {
+            if appState.gitStatus.isGitRepository {
+                Section {
+                    let baseIndex = appState.openTabs.count + 4 // After recent files + 4 actions
+
+                    CommandPaletteRow(
+                        icon: "checkmark.circle",
+                        title: "Git Commit",
+                        subtitle: appState.gitStatus.hasUncommittedChanges ?
+                            "\(appState.gitStatus.modifiedFiles.count + appState.gitStatus.untrackedFiles.count + appState.gitStatus.stagedFiles.count) changes" :
+                            "No changes to commit",
+                        shortcut: "⌘⇧C",
+                        isSelected: selectedIndex == baseIndex
+                    )
+                    .id(baseIndex)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        gitCommit()
+                    }
+                    .opacity(appState.gitStatus.hasUncommittedChanges ? 1.0 : 0.5)
+
+                    CommandPaletteRow(
+                        icon: "arrow.up.circle",
+                        title: "Git Push",
+                        subtitle: appState.gitStatus.hasUnpushedCommits ?
+                            "↑\(appState.gitStatus.ahead) commits to push" :
+                            "Nothing to push",
+                        shortcut: "⌘⇧P",
+                        isSelected: selectedIndex == baseIndex + 1
+                    )
+                    .id(baseIndex + 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        gitPush()
+                    }
+                    .opacity(appState.gitStatus.ahead > 0 || appState.gitStatus.hasUncommittedChanges ? 1.0 : 0.5)
+
+                    CommandPaletteRow(
+                        icon: "arrow.down.circle",
+                        title: "Git Pull",
+                        subtitle: appState.gitStatus.behind > 0 ?
+                            "↓\(appState.gitStatus.behind) commits to pull" :
+                            "Up to date",
+                        shortcut: nil,
+                        isSelected: selectedIndex == baseIndex + 2
+                    )
+                    .id(baseIndex + 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        gitPull()
+                    }
+                } header: {
+                    HStack {
+                        Text("GIT OPERATIONS")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if let branch = appState.gitStatus.currentBranch {
+                            Text("[\(branch)]")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+                }
+            }
+        }
+    }
+
     // MARK: - Search Results Section
 
     private var searchResultsSection: some View {
@@ -298,8 +380,9 @@ struct CommandPaletteView: View {
     private func moveSelection(down: Bool) {
         let maxIndex: Int
         if searchQuery.isEmpty {
-            // Recent files + 4 actions
-            maxIndex = appState.openTabs.count + 3
+            // Recent files + 4 actions + 3 git operations (if git repo)
+            let gitOperationsCount = appState.gitStatus.isGitRepository ? 3 : 0
+            maxIndex = appState.openTabs.count + 3 + gitOperationsCount
         } else {
             // Calculate based on actual search results
             let fuzzyResults = FuzzySearch.search(searchQuery, in: collectAllItems(), keyPath: \.name)
@@ -325,6 +408,9 @@ struct CommandPaletteView: View {
                 case 1: refreshFolder()
                 case 2: toggleOutline()
                 case 3: openFolder()
+                case 4: gitCommit()
+                case 5: gitPush()
+                case 6: gitPull()
                 default: break
                 }
             }
@@ -376,6 +462,25 @@ struct CommandPaletteView: View {
 
     private func openFolder() {
         appState.openFolder()
+        closePanel()
+    }
+
+    private func gitCommit() {
+        if appState.gitStatus.hasUncommittedChanges {
+            showGitCommitDialog = true
+            closePanel()
+        }
+    }
+
+    private func gitPush() {
+        if appState.gitStatus.ahead > 0 || appState.gitStatus.hasUncommittedChanges {
+            appState.performGitPush()
+            closePanel()
+        }
+    }
+
+    private func gitPull() {
+        appState.performGitPull()
         closePanel()
     }
 

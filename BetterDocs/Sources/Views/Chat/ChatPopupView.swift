@@ -4,13 +4,26 @@ struct ChatPopupView: View {
     @Binding var isOpen: Bool
     @Environment(AppState.self) private var appState
     @State private var chatInput: String = ""
-    @State private var messages: [ChatMessage] = []
     @State private var isLoading: Bool = false
     @FocusState private var isInputFocused: Bool
     @State private var isAnnotationsExpanded: Bool = false
     @State private var isAuditLogExpanded: Bool = false
+    @State private var isRelatedFilesExpanded: Bool = true
     @State private var auditLog: [AuditLogEntry] = []
     @State private var inputHeight: CGFloat = 80
+    @State private var showingFilePicker: Bool = false
+
+    private var messages: [ChatMessage] {
+        appState.currentChat?.messages ?? []
+    }
+
+    private var relatedFiles: [String] {
+        appState.currentChat?.relatedFiles ?? []
+    }
+
+    private var relatedFolders: [String] {
+        appState.currentChat?.relatedFolders ?? []
+    }
 
     var body: some View {
         ZStack {
@@ -27,15 +40,38 @@ struct ChatPopupView: View {
                     Spacer()
 
                     VStack(spacing: 0) {
-                        // Header with annotation queue
+                        // Header with chat controls
                         HStack(spacing: 16) {
                             HStack(spacing: 8) {
                                 Image(systemName: "bubble.left.and.bubble.right.fill")
                                     .foregroundColor(.accentColor)
 
-                                Text("Chat")
+                                Text(appState.currentChat?.displayTitle ?? "Chat")
                                     .font(.headline)
+                                    .lineLimit(1)
                             }
+
+                            // New chat button
+                            Button(action: {
+                                appState.createNewChat()
+                            }) {
+                                Image(systemName: "square.and.pencil")
+                                    .foregroundColor(.accentColor)
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .help("New Chat")
+
+                            // Chat list button
+                            Button(action: {
+                                appState.showChatList = true
+                            }) {
+                                Image(systemName: "list.bullet")
+                                    .foregroundColor(.accentColor)
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .help("All Chats")
 
                             // Annotation queue indicator - now a button to toggle
                             let pendingAnnotations = appState.annotations.filter { $0.status == .pending }
@@ -125,6 +161,26 @@ struct ChatPopupView: View {
                             Divider()
                         }
 
+                        // Related Files Section (always show when there are files)
+                        if !relatedFiles.isEmpty || !relatedFolders.isEmpty {
+                            RelatedFilesSection(
+                                files: relatedFiles,
+                                folders: relatedFolders,
+                                isExpanded: $isRelatedFilesExpanded,
+                                onNavigateToFile: navigateToFile,
+                                onRemoveFile: { filePath in
+                                    appState.removeFileFromCurrentChat(filePath)
+                                },
+                                onRemoveFolder: { folderPath in
+                                    appState.removeFolderFromCurrentChat(folderPath)
+                                },
+                                onAddMore: {
+                                    showingFilePicker = true
+                                }
+                            )
+                            Divider()
+                        }
+
                         // Messages area
                         ScrollViewReader { proxy in
                             ScrollView {
@@ -173,6 +229,18 @@ struct ChatPopupView: View {
                         // Input area
                         VStack(spacing: 0) {
                             HStack(alignment: .bottom, spacing: 12) {
+                                // Add file button
+                                Button(action: {
+                                    showingFilePicker = true
+                                }) {
+                                    Image(systemName: "paperclip")
+                                        .font(.title3)
+                                        .foregroundColor(.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Add files or folders")
+                                .padding(.bottom, 4)
+
                                 ZStack(alignment: .topLeading) {
                                     // Actual TextEditor
                                     TextEditor(text: $chatInput)
@@ -236,11 +304,18 @@ struct ChatPopupView: View {
         }
         .onChange(of: isOpen) { _, newValue in
             if newValue {
+                // Create new chat if none exists
+                if appState.currentChat == nil {
+                    appState.createNewChat()
+                }
                 // Focus input when opening
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isInputFocused = true
                 }
             }
+        }
+        .sheet(isPresented: $showingFilePicker) {
+            ChatFilePickerDialog()
         }
     }
 
@@ -248,7 +323,7 @@ struct ChatPopupView: View {
         guard !chatInput.isEmpty else { return }
 
         let userMessage = ChatMessage(content: chatInput, isUser: true)
-        messages.append(userMessage)
+        appState.addMessageToCurrentChat(userMessage)
         print("[CHAT] User message added: \(chatInput)")
         print("[CHAT] Messages array count after user message: \(messages.count)")
 
@@ -258,6 +333,14 @@ struct ChatPopupView: View {
 
         // Clear audit log for new conversation
         auditLog.removeAll()
+
+        // Add current file to related files if not already added
+        if let selectedItem = appState.selectedItem, !selectedItem.isFolder {
+            let filePath = selectedItem.path.path
+            if let currentChat = appState.currentChat, !currentChat.relatedFiles.contains(filePath) {
+                appState.addFileToCurrentChat(filePath)
+            }
+        }
 
         // Send to Claude with the currently selected document as context
         Task {
@@ -285,7 +368,7 @@ struct ChatPopupView: View {
                     let assistantMessage = ChatMessage(content: fullResponse, isUser: false)
                     print("[CHAT] [MainActor] Created assistant message with ID: \(assistantMessage.id)")
                     print("[CHAT] [MainActor] Adding assistant message. Current count: \(self.messages.count)")
-                    self.messages.append(assistantMessage)
+                    self.appState.addMessageToCurrentChat(assistantMessage)
                     print("[CHAT] [MainActor] After append. Count: \(self.messages.count)")
                     print("[CHAT] [MainActor] Message content preview: \(assistantMessage.content.prefix(100))")
                     self.isLoading = false
@@ -294,9 +377,23 @@ struct ChatPopupView: View {
                 print("[CHAT] Error: \(error.localizedDescription)")
                 await MainActor.run {
                     let errorMessage = ChatMessage(content: "Error: \(error.localizedDescription)", isUser: false)
-                    self.messages.append(errorMessage)
+                    self.appState.addMessageToCurrentChat(errorMessage)
                     self.isLoading = false
                 }
+            }
+        }
+    }
+
+    private func navigateToFile(_ filePath: String) {
+        // Find the document in the file tree
+        if let rootFolder = appState.rootFolder {
+            if let document = findDocument(at: filePath, in: rootFolder) {
+                // Select the document to open it
+                appState.selectedItem = document
+                appState.openInTab(document)
+
+                // Close the chat popup
+                closeChatPopup()
             }
         }
     }
@@ -423,15 +520,6 @@ struct ChatPopupView: View {
         }
         return nil
     }
-}
-
-// MARK: - Chat Message Model
-
-struct ChatMessage: Identifiable {
-    let id = UUID()
-    let content: String
-    let isUser: Bool
-    let timestamp = Date()
 }
 
 // MARK: - Chat Message View
@@ -652,38 +740,6 @@ struct ChatInputResizer: View {
     }
 }
 
-// MARK: - Audit Log Models
-
-struct AuditLogEntry: Identifiable {
-    let id = UUID()
-    let timestamp: Date
-    let tool: String
-    let action: String
-    let details: String?
-
-    var icon: String {
-        switch tool.lowercased() {
-        case "read": return "doc.text"
-        case "write", "edit": return "pencil"
-        case "glob", "grep": return "magnifyingglass"
-        case "bash": return "terminal"
-        case "webfetch", "websearch": return "globe"
-        default: return "wrench.and.screwdriver"
-        }
-    }
-
-    var color: Color {
-        switch tool.lowercased() {
-        case "read": return .blue
-        case "write", "edit": return .green
-        case "glob", "grep": return .purple
-        case "bash": return .orange
-        case "webfetch", "websearch": return .cyan
-        default: return .gray
-        }
-    }
-}
-
 // MARK: - Audit Log Section
 
 struct AuditLogSection: View {
@@ -776,6 +832,374 @@ struct AuditLogRow: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Related Files Section
+
+struct RelatedFilesSection: View {
+    let files: [String]
+    let folders: [String]
+    @Binding var isExpanded: Bool
+    let onNavigateToFile: (String) -> Void
+    let onRemoveFile: (String) -> Void
+    let onRemoveFolder: (String) -> Void
+    let onAddMore: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Section Header
+            HStack {
+                Image(systemName: "doc.on.doc.fill")
+                    .foregroundColor(.green)
+                    .font(.caption)
+                Button(action: {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Text("Related Files")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .foregroundColor(.secondary)
+                            .font(.caption2)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text("\(files.count + folders.count)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Button(action: onAddMore) {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help("Add files or folders")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color.green.opacity(0.05))
+
+            if isExpanded {
+                Divider()
+
+                // Files and Folders List
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(folders, id: \.self) { folderPath in
+                            RelatedItemRow(
+                                path: folderPath,
+                                isFolder: true,
+                                onNavigate: { onNavigateToFile(folderPath) },
+                                onRemove: { onRemoveFolder(folderPath) }
+                            )
+
+                            Divider()
+                                .padding(.leading)
+                        }
+
+                        ForEach(files, id: \.self) { filePath in
+                            RelatedItemRow(
+                                path: filePath,
+                                isFolder: false,
+                                onNavigate: { onNavigateToFile(filePath) },
+                                onRemove: { onRemoveFile(filePath) }
+                            )
+
+                            if filePath != files.last {
+                                Divider()
+                                    .padding(.leading)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 150)
+                .background(Color(NSColor.textBackgroundColor).opacity(0.3))
+            }
+        }
+    }
+}
+
+// MARK: - Related Item Row
+
+struct RelatedItemRow: View {
+    let path: String
+    let isFolder: Bool
+    let onNavigate: () -> Void
+    let onRemove: () -> Void
+    @State private var isHovered = false
+
+    private var displayName: String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Icon
+            Image(systemName: isFolder ? "folder.fill" : "doc.fill")
+                .foregroundColor(isFolder ? .blue : .secondary)
+                .font(.caption)
+                .frame(width: 20)
+
+            // Content
+            Button(action: onNavigate) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    Text(path)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            // Remove button (visible on hover)
+            if isHovered {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Remove")
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+        .background(isHovered ? Color.secondary.opacity(0.05) : Color.clear)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+// MARK: - Chat File Picker Dialog
+
+struct ChatFilePickerDialog: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    private var allItems: [any FileSystemItem] {
+        guard let root = appState.rootFolder else { return [] }
+        return collectAllItems(from: root)
+    }
+
+    private var filteredItems: [any FileSystemItem] {
+        if searchText.isEmpty {
+            return []
+        }
+        return allItems.filter { item in
+            item.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private var selectedFiles: [String] {
+        appState.currentChat?.relatedFiles ?? []
+    }
+
+    private var selectedFolders: [String] {
+        appState.currentChat?.relatedFolders ?? []
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Select Files or Folders")
+                    .font(.headline)
+
+                Spacer()
+
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                        .imageScale(.large)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding()
+
+            Divider()
+
+            // Search field
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+
+                TextField("Search files and folders...", text: $searchText)
+                    .textFieldStyle(.plain)
+
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            // Results
+            ScrollView {
+                if searchText.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.largeTitle)
+                            .foregroundColor(.secondary)
+
+                        Text("Type to search for files or folders")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(40)
+                } else if filteredItems.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.largeTitle)
+                            .foregroundColor(.secondary)
+
+                        Text("No matches found")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(40)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(filteredItems, id: \.id) { item in
+                            ChatFilePickerRow(
+                                item: item,
+                                isSelected: isSelected(item),
+                                onToggle: {
+                                    toggleSelection(item)
+                                }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+
+            Divider()
+
+            // Footer
+            HStack {
+                Text("\(selectedFiles.count + selectedFolders.count) selected")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button("Done") {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+        .frame(width: 500, height: 400)
+    }
+
+    private func collectAllItems(from folder: Folder) -> [any FileSystemItem] {
+        var items: [any FileSystemItem] = [folder]
+
+        for child in folder.children {
+            if let subfolder = child as? Folder {
+                items.append(contentsOf: collectAllItems(from: subfolder))
+            } else {
+                items.append(child)
+            }
+        }
+
+        return items
+    }
+
+    private func isSelected(_ item: any FileSystemItem) -> Bool {
+        let path = item.path.path
+        if item.isFolder {
+            return selectedFolders.contains(path)
+        } else {
+            return selectedFiles.contains(path)
+        }
+    }
+
+    private func toggleSelection(_ item: any FileSystemItem) {
+        let path = item.path.path
+
+        if item.isFolder {
+            if selectedFolders.contains(path) {
+                appState.removeFolderFromCurrentChat(path)
+            } else {
+                appState.addFolderToCurrentChat(path)
+            }
+        } else {
+            if selectedFiles.contains(path) {
+                appState.removeFileFromCurrentChat(path)
+            } else {
+                appState.addFileToCurrentChat(path)
+            }
+        }
+    }
+}
+
+// MARK: - Chat File Picker Row
+
+struct ChatFilePickerRow: View {
+    let item: any FileSystemItem
+    let isSelected: Bool
+    let onToggle: () -> Void
+
+    private var relativePath: String {
+        item.path.path
+    }
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(isSelected ? .accentColor : .secondary)
+                    .imageScale(.large)
+
+                Image(systemName: item.isFolder ? "folder.fill" : "doc.fill")
+                    .foregroundColor(item.isFolder ? .blue : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.body)
+                        .foregroundColor(.primary)
+
+                    Text(relativePath)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
     }
 }
 

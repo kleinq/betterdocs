@@ -44,6 +44,31 @@ struct ContentView: View {
                 set: { appState.isChatPopupOpen = $0 }
             ))
 
+            // Chat List Sidebar
+            if appState.showChatList {
+                ZStack {
+                    // Background overlay
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                                appState.showChatList = false
+                            }
+                        }
+
+                    // Chat list positioned on the right side
+                    HStack {
+                        Spacer()
+
+                        ChatListView()
+                            .transition(.move(edge: .trailing))
+                            .shadow(color: .black.opacity(0.3), radius: 10)
+                    }
+                }
+                .zIndex(50)
+                .transition(.opacity)
+            }
+
             // Help Screen
             HelpView(isOpen: Binding(
                 get: { appState.isHelpOpen },

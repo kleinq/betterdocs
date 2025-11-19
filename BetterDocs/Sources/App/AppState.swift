@@ -27,6 +27,11 @@ class AppState {
     // Annotations
     var annotations: [Annotation] = []
 
+    // Chats
+    var chats: [Chat] = []
+    var currentChat: Chat?
+    var showChatList: Bool = false
+
     // Services
     let documentService = DocumentService()
     let searchService = SearchService()
@@ -40,6 +45,8 @@ class AppState {
         restoreOpenTabs()
         // Load annotations
         loadAnnotations()
+        // Load chats
+        loadChats()
     }
 
     private func restoreLastFolder() {
@@ -342,6 +349,128 @@ class AppState {
         if let data = UserDefaults.standard.data(forKey: "annotations"),
            let decoded = try? JSONDecoder().decode([Annotation].self, from: data) {
             annotations = decoded
+        }
+    }
+
+    // MARK: - Chat Management
+
+    func createNewChat(title: String = "New Chat") {
+        let chat = Chat(title: title)
+        chats.insert(chat, at: 0) // Add to beginning
+        currentChat = chat
+        saveChats()
+        print("💬 Created new chat: \(chat.displayTitle)")
+    }
+
+    func deleteChat(_ id: UUID) {
+        chats.removeAll { $0.id == id }
+        if currentChat?.id == id {
+            currentChat = chats.first
+        }
+        saveChats()
+        print("🗑️ Deleted chat")
+    }
+
+    func archiveChat(_ id: UUID) {
+        if let index = chats.firstIndex(where: { $0.id == id }) {
+            chats[index].isArchived = true
+            chats[index].modified = Date()
+            saveChats()
+            print("📦 Archived chat")
+        }
+    }
+
+    func unarchiveChat(_ id: UUID) {
+        if let index = chats.firstIndex(where: { $0.id == id }) {
+            chats[index].isArchived = false
+            chats[index].modified = Date()
+            saveChats()
+            print("📤 Unarchived chat")
+        }
+    }
+
+    func updateChatTitle(_ id: UUID, title: String) {
+        if let index = chats.firstIndex(where: { $0.id == id }) {
+            chats[index].title = title
+            chats[index].modified = Date()
+            saveChats()
+        }
+    }
+
+    func addMessageToCurrentChat(_ message: ChatMessage) {
+        guard var chat = currentChat else {
+            // Create new chat if none exists
+            createNewChat()
+            guard var chat = currentChat else { return }
+            chat.addMessage(message)
+            updateChat(chat)
+            return
+        }
+
+        var updatedChat = chat
+        updatedChat.addMessage(message)
+        updateChat(updatedChat)
+    }
+
+    func updateChat(_ chat: Chat) {
+        if let index = chats.firstIndex(where: { $0.id == chat.id }) {
+            chats[index] = chat
+        }
+        if currentChat?.id == chat.id {
+            currentChat = chat
+        }
+        saveChats()
+    }
+
+    func selectChat(_ chat: Chat) {
+        currentChat = chat
+        isChatPopupOpen = true
+    }
+
+    func addFileToCurrentChat(_ filePath: String) {
+        guard var chat = currentChat else { return }
+        chat.addRelatedFile(filePath)
+        updateChat(chat)
+    }
+
+    func removeFileFromCurrentChat(_ filePath: String) {
+        guard var chat = currentChat else { return }
+        chat.removeRelatedFile(filePath)
+        updateChat(chat)
+    }
+
+    func addFolderToCurrentChat(_ folderPath: String) {
+        guard var chat = currentChat else { return }
+        chat.addRelatedFolder(folderPath)
+        updateChat(chat)
+    }
+
+    func removeFolderFromCurrentChat(_ folderPath: String) {
+        guard var chat = currentChat else { return }
+        chat.removeRelatedFolder(folderPath)
+        updateChat(chat)
+    }
+
+    var activeChats: [Chat] {
+        chats.filter { !$0.isArchived }.sorted { $0.modified > $1.modified }
+    }
+
+    var archivedChats: [Chat] {
+        chats.filter { $0.isArchived }.sorted { $0.modified > $1.modified }
+    }
+
+    private func saveChats() {
+        if let encoded = try? JSONEncoder().encode(chats) {
+            UserDefaults.standard.set(encoded, forKey: "chats")
+        }
+    }
+
+    private func loadChats() {
+        if let data = UserDefaults.standard.data(forKey: "chats"),
+           let decoded = try? JSONDecoder().decode([Chat].self, from: data) {
+            chats = decoded
+            // Set current chat to the most recent active chat
+            currentChat = chats.filter { !$0.isArchived }.sorted { $0.modified > $1.modified }.first
         }
     }
 

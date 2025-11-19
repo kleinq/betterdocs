@@ -399,8 +399,16 @@ class AppState {
         if let index = chats.firstIndex(where: { $0.id == id }) {
             chats[index].isArchived = true
             chats[index].modified = Date()
+
+            // If archiving the current chat, create a new one
+            if currentChat?.id == id {
+                createNewChat()
+                print("📦 Archived current chat, created new chat")
+            } else {
+                print("📦 Archived chat")
+            }
+
             saveChats()
-            print("📦 Archived chat")
         }
     }
 

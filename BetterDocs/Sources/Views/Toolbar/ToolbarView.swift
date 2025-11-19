@@ -3,6 +3,7 @@ import SwiftUI
 struct ToolbarView: View {
     @Environment(AppState.self) private var appState
     @State private var showingFileCreationSheet = false
+    @State private var showGitCommitDialog = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -73,6 +74,73 @@ struct ToolbarView: View {
 
             Spacer()
 
+            // Git operations
+            if appState.gitStatus.isGitRepository {
+                HStack(spacing: 8) {
+                    Divider()
+                        .frame(height: 24)
+
+                    // Git status indicator
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.branch")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if let branch = appState.gitStatus.currentBranch {
+                            Text(branch)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        // Changes indicator
+                        if appState.gitStatus.hasUncommittedChanges {
+                            Text("•")
+                                .foregroundColor(.orange)
+                        }
+
+                        // Ahead/behind indicators
+                        if appState.gitStatus.ahead > 0 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "arrow.up")
+                                    .font(.caption2)
+                                Text("\(appState.gitStatus.ahead)")
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.blue)
+                        }
+
+                        if appState.gitStatus.behind > 0 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "arrow.down")
+                                    .font(.caption2)
+                                Text("\(appState.gitStatus.behind)")
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.blue)
+                        }
+                    }
+
+                    // Git action buttons
+                    Button(action: { showGitCommitDialog = true }) {
+                        Image(systemName: "checkmark.circle")
+                    }
+                    .help("Git Commit (⌘⇧C)")
+                    .disabled(!appState.gitStatus.hasUncommittedChanges || appState.isPerformingGitOperation)
+
+                    Button(action: { appState.performGitPush() }) {
+                        Image(systemName: "arrow.up.circle")
+                    }
+                    .help("Git Push (⌘⇧P)")
+                    .disabled((appState.gitStatus.ahead == 0 && !appState.gitStatus.hasUncommittedChanges) || appState.isPerformingGitOperation)
+
+                    Button(action: { appState.performGitPull() }) {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .help("Git Pull")
+                    .disabled(appState.isPerformingGitOperation)
+                }
+            }
+
             // Settings
             Button(action: { openSettings() }) {
                 Image(systemName: "gear")
@@ -82,6 +150,10 @@ struct ToolbarView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color(NSColor.controlBackgroundColor))
+        .sheet(isPresented: $showGitCommitDialog) {
+            GitCommitDialog()
+                .environment(appState)
+        }
     }
 
     private func openSettings() {

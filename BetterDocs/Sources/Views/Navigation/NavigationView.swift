@@ -163,20 +163,18 @@ struct NavigationView: View {
             // Folder was loaded or reloaded (e.g., on app launch or by file watcher)
             if newValue != nil {
                 logInfo("📂 Folder reloaded, restoring expanded state...")
-                // Small delay to ensure the view is ready
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    restoreExpandedFolders()
-                    logInfo("✅ Restored \(expandedFolders.count) expanded folders")
+                // Restore immediately to prevent folder list from appearing empty
+                restoreExpandedFolders()
+                logInfo("✅ Restored \(expandedFolders.count) expanded folders")
 
-                    // Ensure currently selected item is visible
-                    if let selectedID = selectedID, let folder = appState.rootFolder {
-                        expandPathToItem(selectedID, in: folder)
-                    } else if oldValue == nil, let selectedItem = appState.selectedItem {
-                        // On initial load, expand to selected item from app state
-                        selectedID = selectedItem.id
-                        if let folder = appState.rootFolder {
-                            expandPathToItem(selectedItem.id, in: folder)
-                        }
+                // Ensure currently selected item is visible
+                if let selectedID = selectedID, let folder = appState.rootFolder {
+                    expandPathToItem(selectedID, in: folder)
+                } else if oldValue == nil, let selectedItem = appState.selectedItem {
+                    // On initial load, expand to selected item from app state
+                    selectedID = selectedItem.id
+                    if let folder = appState.rootFolder {
+                        expandPathToItem(selectedItem.id, in: folder)
                     }
                 }
             }

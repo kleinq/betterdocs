@@ -30,7 +30,7 @@ struct ToolbarView: View {
                     Image(systemName: "plus")
                 }
                 .help("Create new file")
-                .disabled(appState.selectedItem == nil || !appState.selectedItem!.isFolder)
+                .disabled(appState.rootFolder == nil)
 
                 Divider()
                     .frame(height: 24)
@@ -161,16 +161,48 @@ struct ToolbarView: View {
     }
 
     private func createNewFile(_ fileType: FileType) {
-        guard let selectedFolder = appState.selectedItem as? Folder else {
-            // If selected item is not a folder, try to find its parent
-            if let selectedItem = appState.selectedItem,
-               let rootFolder = appState.rootFolder,
-               let parentFolder = findParentFolder(of: selectedItem, in: rootFolder) {
-                appState.createNewFile(in: parentFolder, fileType: fileType)
-            }
+        guard let rootFolder = appState.rootFolder else { return }
+
+        // Priority 1: Use the folder of the currently active file
+        if let activeTabID = appState.activeTabID,
+           let activeTab = appState.openTabs.first(where: { $0.id == activeTabID }),
+           let activeItem = findItem(byID: activeTab.itemID, in: rootFolder),
+           let parentFolder = findParentFolder(of: activeItem, in: rootFolder) {
+            appState.createNewFile(in: parentFolder, fileType: fileType)
             return
         }
-        appState.createNewFile(in: selectedFolder, fileType: fileType)
+
+        // Priority 2: Use selected item's folder if it's a folder
+        if let selectedFolder = appState.selectedItem as? Folder {
+            appState.createNewFile(in: selectedFolder, fileType: fileType)
+            return
+        }
+
+        // Priority 3: Use selected item's parent folder
+        if let selectedItem = appState.selectedItem,
+           let parentFolder = findParentFolder(of: selectedItem, in: rootFolder) {
+            appState.createNewFile(in: parentFolder, fileType: fileType)
+            return
+        }
+
+        // Priority 4: Use root folder as fallback
+        appState.createNewFile(in: rootFolder, fileType: fileType)
+    }
+
+    private func findItem(byID id: UUID, in folder: Folder) -> (any FileSystemItem)? {
+        if folder.id == id {
+            return folder
+        }
+        for child in folder.children {
+            if child.id == id {
+                return child
+            }
+            if let subfolder = child as? Folder,
+               let found = findItem(byID: id, in: subfolder) {
+                return found
+            }
+        }
+        return nil
     }
 
     private func findParentFolder(of item: any FileSystemItem, in folder: Folder) -> Folder? {

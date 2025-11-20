@@ -86,8 +86,8 @@ struct TextEditorView: View {
                     }
             }
         }
-        .id(document.id)
-        .task(id: document.id) {
+        .id(document.modified)
+        .task(id: document.modified) {
             await loadContent()
         }
         .onDisappear {
@@ -109,14 +109,8 @@ struct TextEditorView: View {
         isLoading = true
         defer { isLoading = false }
 
-        // Try to load from document.content first
-        if let existingContent = document.content {
-            content = existingContent
-            lastSavedContent = existingContent
-            return
-        }
-
-        // Otherwise load from file
+        // Always load from file to ensure we have the latest content
+        // (cached content may be stale after edits in preview mode)
         do {
             let fileContent = try String(contentsOf: document.path, encoding: .utf8)
             content = fileContent
@@ -154,6 +148,12 @@ struct TextEditorView: View {
 
             // Refresh the folder tree to update file size/modified date
             await appState.refreshFolder()
+
+            // Re-select the document to get the updated instance with new modified date
+            if let rootFolder = appState.rootFolder,
+               let updatedDoc = appState.findItem(byPath: document.path.path, in: rootFolder) {
+                appState.selectItem(updatedDoc)
+            }
         } catch {
             logError("❌ Failed to save file: \(error)")
         }

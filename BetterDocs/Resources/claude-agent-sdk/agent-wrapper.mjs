@@ -52,6 +52,7 @@ try {
   }
 
   console.error('[WRAPPER] Finished iterating messages');
+  process.exit(0);
 } catch (error) {
   console.error(`[WRAPPER] Error: ${error.message}`);
   console.error(`[WRAPPER] Stack: ${error.stack}`);

@@ -27,7 +27,7 @@ struct Document: FileSystemItem {
     }
 
     init(
-        id: UUID = UUID(),
+        id: UUID? = nil,
         name: String,
         path: URL,
         type: DocumentType,
@@ -37,7 +37,8 @@ struct Document: FileSystemItem {
         content: String? = nil,
         metadata: [String: String] = [:]
     ) {
-        self.id = id
+        // Use stable ID based on path, or provided ID, or generate new one
+        self.id = id ?? UUID.stableID(for: path)
         self.name = name
         self.path = path
         self.type = type

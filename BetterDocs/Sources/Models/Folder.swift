@@ -38,14 +38,15 @@ class Folder: FileSystemItem {
     }
 
     init(
-        id: UUID = UUID(),
+        id: UUID? = nil,
         name: String,
         path: URL,
         created: Date,
         modified: Date,
         children: [any FileSystemItem] = []
     ) {
-        self.id = id
+        // Use stable ID based on path, or provided ID, or generate new one
+        self.id = id ?? UUID.stableID(for: path)
         self.name = name
         self.path = path
         self.created = created

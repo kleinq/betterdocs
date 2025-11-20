@@ -57,7 +57,6 @@ struct NavigationView: View {
                 Group {
                     if appState.viewMode == .grid {
                         GridView(folder: rootFolder)
-                            .id("grid-\(rootFolder.path.path)") // Stable ID based on path, not UUID
                     } else {
                         ScrollViewReader { proxy in
                             ScrollView {
@@ -80,7 +79,6 @@ struct NavigationView: View {
                                 }
                             }
                         }
-                        .id("tree-\(rootFolder.path.path)") // Stable ID based on path, not UUID
                     }
                 }
                 .focusable()
@@ -177,6 +175,12 @@ struct NavigationView: View {
                         expandPathToItem(selectedItem.id, in: folder)
                     }
                 }
+
+                // Restore focus if this was a reload (not initial load)
+                if oldValue != nil {
+                    logInfo("🎯 Restoring focus after folder reload")
+                    isFocused = true
+                }
             }
         }
         .onChange(of: expandedFolders) { _, _ in
@@ -191,9 +195,9 @@ struct NavigationView: View {
             return event
         }
 
-        // Check if we're in a text field or webview (preview)
+        // Only skip handling if we're actively editing text (not just viewing in webview)
         if let firstResponder = NSApp.keyWindow?.firstResponder,
-           firstResponder is NSText || firstResponder is NSTextView || firstResponder is WKWebView {
+           (firstResponder is NSText || firstResponder is NSTextView) && appState.isEditMode {
             return event
         }
 

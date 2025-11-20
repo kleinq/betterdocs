@@ -136,7 +136,7 @@ class AppState {
         // This is handled in restoreLastFolder()
     }
 
-    private func findItem(byPath path: String, in folder: Folder) -> (any FileSystemItem)? {
+    func findItem(byPath path: String, in folder: Folder) -> (any FileSystemItem)? {
         // Check if this folder matches
         if folder.path.path == path {
             return folder

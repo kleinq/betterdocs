@@ -430,8 +430,8 @@ struct MarkdownPreview: View {
                 }
             }
         }
-        .id(document.id) // Force view refresh when document changes
-        .task(id: document.id) {
+        .id(document.modified) // Force view refresh when document modified date changes
+        .task(id: document.modified) {
             await loadContent()
         }
     }
@@ -442,14 +442,8 @@ struct MarkdownPreview: View {
 
         print("📄 Loading markdown from: \(document.path.path)")
 
-        // Try to load from document.content first
-        if let existingContent = document.content {
-            print("✅ Using cached content (\(existingContent.count) chars)")
-            content = existingContent
-            return
-        }
-
-        // Otherwise load from file
+        // Always load from file to ensure we have the latest content
+        // (cached content may be stale after edits)
         do {
             let fileContent = try String(contentsOf: document.path, encoding: .utf8)
             print("✅ Loaded \(fileContent.count) chars from file")
@@ -488,8 +482,8 @@ struct TextPreview: View {
                 }
             }
         }
-        .id(document.id) // Force view refresh when document changes
-        .task(id: document.id) {
+        .id(document.modified) // Force view refresh when document modified date changes
+        .task(id: document.modified) {
             await loadContent()
         }
     }
@@ -498,13 +492,8 @@ struct TextPreview: View {
         isLoading = true
         defer { isLoading = false }
 
-        // Try to load from document.content first
-        if let existingContent = document.content {
-            content = existingContent
-            return
-        }
-
-        // Otherwise load from file
+        // Always load from file to ensure we have the latest content
+        // (cached content may be stale after edits)
         do {
             let fileContent = try String(contentsOf: document.path, encoding: .utf8)
             content = fileContent

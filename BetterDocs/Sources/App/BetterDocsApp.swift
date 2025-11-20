@@ -113,11 +113,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Handle Cmd+W to close tabs instead of windows
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set app icon
-        if let iconPath = Bundle.main.path(forResource: "AppIcon", ofType: "icns"),
-           let icon = NSImage(contentsOfFile: iconPath) {
-            NSApplication.shared.applicationIconImage = icon
-        }
+        // App icon is automatically loaded from Assets.xcassets/AppIcon.appiconset
 
         // Set ourselves as the window delegate
         if let window = NSApplication.shared.windows.first {

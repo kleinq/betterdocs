@@ -20,6 +20,15 @@ mkdir -p "$RESOURCES_DIR"
 echo "Copying executable..."
 cp .build/arm64-apple-macosx/debug/BetterDocs "$MACOS_DIR/"
 
+# Copy app icon
+echo "Copying app icon..."
+if [ -f "BetterDocs/Resources/AppIcon.icns" ]; then
+    cp "BetterDocs/Resources/AppIcon.icns" "$RESOURCES_DIR/"
+    echo "  ✓ App icon bundled"
+else
+    echo "  ⚠ App icon not found"
+fi
+
 # Bundle Claude Agent SDK
 echo "Bundling Claude Agent SDK..."
 if [ -d "BetterDocs/Resources/claude-agent-sdk" ]; then
@@ -54,6 +63,8 @@ cat > "$CONTENTS_DIR/Info.plist" << 'PLIST'
     <string>1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSHighResolutionCapable</key>

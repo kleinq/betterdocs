@@ -195,6 +195,11 @@ struct NavigationView: View {
             return event
         }
 
+        // Don't handle keyboard shortcuts when chat popup is open
+        guard !appState.isChatPopupOpen else {
+            return event
+        }
+
         // Only skip handling if we're actively editing text (not just viewing in webview)
         if let firstResponder = NSApp.keyWindow?.firstResponder,
            (firstResponder is NSText || firstResponder is NSTextView) && appState.isEditMode {
@@ -351,7 +356,7 @@ struct NavigationView: View {
               let item = folder.findItem(withID: selectedID),
               item.isFolder else { return }
 
-        withAnimation(.easeInOut(duration: 0.2)) {
+        _ = withAnimation(.easeInOut(duration: 0.2)) {
             expandedFolders.insert(selectedID)
         }
     }
@@ -363,7 +368,7 @@ struct NavigationView: View {
 
         if item.isFolder && expandedFolders.contains(selectedID) {
             // Collapse the current folder if it's expanded
-            withAnimation(.easeInOut(duration: 0.2)) {
+            _ = withAnimation(.easeInOut(duration: 0.2)) {
                 expandedFolders.remove(selectedID)
             }
         } else {

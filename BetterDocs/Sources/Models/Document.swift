@@ -53,6 +53,7 @@ struct Document: FileSystemItem {
 // Document type enumeration
 enum DocumentType: Hashable {
     case markdown
+    case html
     case pdf
     case word
     case powerpoint
@@ -67,6 +68,8 @@ enum DocumentType: Hashable {
         switch self {
         case .markdown:
             return Image(systemName: "doc.text.fill")
+        case .html:
+            return Image(systemName: "globe")
         case .pdf:
             return Image(systemName: "doc.richtext.fill")
         case .word:
@@ -90,6 +93,8 @@ enum DocumentType: Hashable {
         switch self {
         case .markdown:
             return "Markdown"
+        case .html:
+            return "HTML"
         case .pdf:
             return "PDF"
         case .word:
@@ -122,6 +127,8 @@ enum DocumentType: Hashable {
         switch ext {
         case "md", "markdown":
             return .markdown
+        case "html", "htm":
+            return .html
         case "pdf":
             return .pdf
         case "doc", "docx":

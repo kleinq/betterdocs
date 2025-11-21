@@ -245,7 +245,19 @@ struct NavigationView: View {
 
         case 49: // Space
             if !appState.isSearching && appState.rootFolder != nil && appState.viewMode == .list {
-                toggleSelectedFolder()
+                if let selected = selectedID,
+                   let item = findItem(byID: selected, in: appState.rootFolder!) {
+                    if item.isFolder {
+                        // Toggle folder expansion
+                        toggleSelectedFolder()
+                    } else {
+                        // Scroll preview one page down
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("ScrollPreviewPageDown"),
+                            object: nil
+                        )
+                    }
+                }
                 return nil
             }
 
@@ -423,6 +435,10 @@ struct NavigationView: View {
             }
         }
         return nil
+    }
+
+    private func findItem(byID id: UUID, in folder: Folder) -> (any FileSystemItem)? {
+        return folder.findItem(withID: id)
     }
 
     // MARK: - Expanded Folders Persistence
@@ -614,6 +630,14 @@ struct FileTreeItemView: View {
                     ) { fileType in
                         appState.createNewFile(in: folder, fileType: fileType)
                     }
+                }
+            }
+            .sheet(isPresented: $showingRenameSheet) {
+                RenameSheet(
+                    isPresented: $showingRenameSheet,
+                    item: item
+                ) { newName in
+                    appState.renameItem(item, newName: newName)
                 }
             }
 

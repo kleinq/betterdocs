@@ -89,7 +89,7 @@ struct BetterDocsApp: App {
 
             CommandGroup(replacing: .help) {
                 Button("BetterDocs Help") {
-                    // TODO: Show help
+                    appState.isHelpOpen = true
                 }
             }
         }

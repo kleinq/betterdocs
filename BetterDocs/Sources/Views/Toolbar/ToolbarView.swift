@@ -80,45 +80,49 @@ struct ToolbarView: View {
                     Divider()
                         .frame(height: 24)
 
-                    // Git status indicator
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.branch")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        if let branch = appState.gitStatus.currentBranch {
-                            Text(branch)
+                    // Git status indicator (clickable to show file list)
+                    Button(action: { appState.showGitPanel.toggle() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.branch")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                        }
 
-                        // Changes indicator
-                        if appState.gitStatus.hasUncommittedChanges {
-                            Text("•")
-                                .foregroundColor(.orange)
-                        }
-
-                        // Ahead/behind indicators
-                        if appState.gitStatus.ahead > 0 {
-                            HStack(spacing: 2) {
-                                Image(systemName: "arrow.up")
-                                    .font(.caption2)
-                                Text("\(appState.gitStatus.ahead)")
-                                    .font(.caption2)
+                            if let branch = appState.gitStatus.currentBranch {
+                                Text(branch)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
-                            .foregroundColor(.blue)
-                        }
 
-                        if appState.gitStatus.behind > 0 {
-                            HStack(spacing: 2) {
-                                Image(systemName: "arrow.down")
-                                    .font(.caption2)
-                                Text("\(appState.gitStatus.behind)")
-                                    .font(.caption2)
+                            // Changes indicator
+                            if appState.gitStatus.hasUncommittedChanges {
+                                Text("•")
+                                    .foregroundColor(.orange)
                             }
-                            .foregroundColor(.blue)
+
+                            // Ahead/behind indicators
+                            if appState.gitStatus.ahead > 0 {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "arrow.up")
+                                        .font(.caption2)
+                                    Text("\(appState.gitStatus.ahead)")
+                                        .font(.caption2)
+                                }
+                                .foregroundColor(.blue)
+                            }
+
+                            if appState.gitStatus.behind > 0 {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "arrow.down")
+                                        .font(.caption2)
+                                    Text("\(appState.gitStatus.behind)")
+                                        .font(.caption2)
+                                }
+                                .foregroundColor(.blue)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .help("Show git file list")
 
                     // Git action buttons
                     Button(action: { showGitCommitDialog = true }) {

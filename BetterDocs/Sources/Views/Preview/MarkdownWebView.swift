@@ -76,6 +76,7 @@ struct MarkdownWebView: NSViewRepresentable {
         var scrollTrackingTimer: Timer?
         weak var webView: WKWebView?
         var notificationObserver: NSObjectProtocol?
+        var scrollPageObserver: NSObjectProtocol?
         var lastMarkdown: String = ""
         var selectedText: String?
         var selectedRange: (Int, Int)?
@@ -107,6 +108,23 @@ struct MarkdownWebView: NSViewRepresentable {
                     }
                 }
             }
+
+            // Listen for space bar page-down scroll
+            scrollPageObserver = NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("ScrollPreviewPageDown"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self = self, let webView = self.webView else { return }
+
+                // Scroll down one page (viewport height)
+                webView.evaluateJavaScript("""
+                    window.scrollBy({
+                        top: window.innerHeight * 0.9,
+                        behavior: 'smooth'
+                    });
+                """)
+            }
         }
 
         func cleanup() {
@@ -114,6 +132,10 @@ struct MarkdownWebView: NSViewRepresentable {
             scrollTrackingTimer = nil
 
             if let observer = notificationObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+
+            if let observer = scrollPageObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
 
@@ -478,6 +500,12 @@ class CustomWebView: WKWebView {
         return true
     }
 
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        // Become first responder when clicked
+        self.window?.makeFirstResponder(self)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // Handle Cmd+F for find
         if event.modifierFlags.contains(.command) {
@@ -498,7 +526,8 @@ class CustomWebView: WKWebView {
                 return true
             }
         }
-        return super.performKeyEquivalent(with: event)
+        // Let other key events pass through to web content
+        return false
     }
 
     private func showFindInterface() {

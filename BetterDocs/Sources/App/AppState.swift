@@ -22,6 +22,7 @@ class AppState {
     var isCommandPaletteOpen: Bool = false
     var isChatPopupOpen: Bool = false
     var isHelpOpen: Bool = false
+    var showGitPanel: Bool = false
     var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "list") ?? .list
     var isEditMode: Bool = false // Toggle between preview and edit mode
 

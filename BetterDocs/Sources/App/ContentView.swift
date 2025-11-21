@@ -1,9 +1,11 @@
 import SwiftUI
+import WebKit
 
 struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var navigationWidth: CGFloat = UserDefaults.standard.double(forKey: "navigationWidth") == 0 ? 250 : UserDefaults.standard.double(forKey: "navigationWidth")
     @State private var eventMonitor: Any?
+    @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -69,6 +71,34 @@ struct ContentView: View {
                 .transition(.opacity)
             }
 
+            // Git File List Panel
+            if appState.showGitPanel {
+                ZStack {
+                    // Background overlay
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                                appState.showGitPanel = false
+                            }
+                        }
+
+                    // Git panel positioned on the right side
+                    HStack {
+                        Spacer()
+
+                        GitFileListView(isOpen: Binding(
+                            get: { appState.showGitPanel },
+                            set: { appState.showGitPanel = $0 }
+                        ))
+                        .transition(.move(edge: .trailing))
+                        .shadow(color: .black.opacity(0.3), radius: 10)
+                    }
+                }
+                .zIndex(50)
+                .transition(.opacity)
+            }
+
             // Help Screen
             HelpView(isOpen: Binding(
                 get: { appState.isHelpOpen },
@@ -77,12 +107,26 @@ struct ContentView: View {
             .zIndex(100)
         }
         .onChange(of: navigationWidth) { _, newValue in
-            UserDefaults.standard.set(newValue, forKey: "navigationWidth")
+            // Debounce UserDefaults saves to avoid excessive writes during drag
+            saveTask?.cancel()
+            saveTask = Task {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                UserDefaults.standard.set(newValue, forKey: "navigationWidth")
+            }
         }
         .onAppear {
             // Set up keyboard event monitor for Cmd+/, Cmd+K, Cmd+F, and Ctrl+O
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                print("📥 ContentView received key event: '\(event.characters ?? "nil")' with modifiers: \(event.modifierFlags)")
+                // If a WKWebView has focus, let it handle all non-command key events
+                if let firstResponder = NSApp.keyWindow?.firstResponder,
+                   firstResponder is WKWebView {
+                    // Only intercept our specific command shortcuts
+                    if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+                        // Let WKWebView handle regular keys (arrows, letters, etc.)
+                        return event
+                    }
+                }
 
                 // Check if Cmd+/ is pressed (without Shift to avoid conflict with Cmd+? for help)
                 if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && event.charactersIgnoringModifiers == "/" {
@@ -159,6 +203,7 @@ struct ResizableDivider: View {
     @State private var isDragging = false
     @State private var isHovered = false
     @State private var startWidth: CGFloat = 0
+    @State private var tempWidth: CGFloat = 0
 
     var body: some View {
         Rectangle()
@@ -174,11 +219,12 @@ struct ResizableDivider: View {
                 }
             }
             .gesture(
-                DragGesture()
+                DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true
                             startWidth = width
+                            tempWidth = width
                             NSCursor.resizeLeftRight.push()
                         }
 
@@ -186,13 +232,23 @@ struct ResizableDivider: View {
                         // For left sidebar, dragging right (positive) should increase width
                         let delta = isRightSidebar ? -value.translation.width : value.translation.width
                         let newWidth = startWidth + delta
-                        width = min(max(newWidth, minWidth), maxWidth)
+                        let clampedWidth = min(max(newWidth, minWidth), maxWidth)
+
+                        // Only update if change is significant (reduces update frequency)
+                        if abs(clampedWidth - tempWidth) > 2 {
+                            width = clampedWidth
+                            tempWidth = clampedWidth
+                        }
                     }
-                    .onEnded { _ in
+                    .onEnded { value in
                         isDragging = false
                         if !isHovered {
                             NSCursor.pop()
                         }
+                        // Final update to ensure exact position
+                        let delta = isRightSidebar ? -(value.translation.width) : value.translation.width
+                        let newWidth = startWidth + delta
+                        width = min(max(newWidth, minWidth), maxWidth)
                     }
             )
     }

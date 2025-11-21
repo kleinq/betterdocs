@@ -290,6 +290,8 @@ struct DocumentPreviewView: View {
                 switch document.type {
                 case .markdown:
                     MarkdownPreview(document: document)
+                case .html:
+                    HTMLPreview(document: document)
                 case .text, .code:
                     TextPreview(document: document)
                 case .pdf:
@@ -307,7 +309,7 @@ struct DocumentPreviewView: View {
     }
 
     var canEdit: Bool {
-        return document.type == .markdown || document.type == .text || document.type == .code(language: "")
+        return document.type == .markdown || document.type == .html || document.type == .text || document.type == .code(language: "")
     }
 }
 
@@ -455,31 +457,63 @@ struct MarkdownPreview: View {
     }
 }
 
+struct HTMLPreview: View {
+    let document: Document
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if let activeTabID = appState.activeTabID,
+           let tab = (appState.openTabs + [appState.previewTab].compactMap { $0 }).first(where: { $0.id == activeTabID }) {
+            HTMLWebView(
+                document: document,
+                scrollPosition: Binding(
+                    get: { tab.scrollPosition },
+                    set: { newPosition in
+                        appState.updateTabScrollPosition(activeTabID, position: newPosition)
+                    }
+                )
+            )
+        } else {
+            VStack {
+                Text("Unable to load HTML file")
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
 struct TextPreview: View {
     let document: Document
     @State private var content: String?
     @State private var isLoading = false
+    @State private var scrollOffset: CGFloat = 0
 
     var body: some View {
-        ScrollView([.horizontal, .vertical]) {
-            Group {
-                if let loadedContent = content {
-                    Text(loadedContent)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                } else if isLoading {
-                    ProgressView("Loading...")
-                } else {
-                    VStack {
-                        Text("Unable to load file")
-                            .foregroundColor(.secondary)
-                        Button("Retry") {
-                            Task { await loadContent() }
+        GeometryReader { geometry in
+            ScrollView([.horizontal, .vertical]) {
+                Group {
+                    if let loadedContent = content {
+                        Text(loadedContent)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    } else if isLoading {
+                        ProgressView("Loading...")
+                    } else {
+                        VStack {
+                            Text("Unable to load file")
+                                .foregroundColor(.secondary)
+                            Button("Retry") {
+                                Task { await loadContent() }
+                            }
                         }
                     }
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ScrollPreviewPageDown"))) { _ in
+                // Scroll down by viewport height
+                scrollOffset += geometry.size.height * 0.9
             }
         }
         .id(document.modified) // Force view refresh when document modified date changes
